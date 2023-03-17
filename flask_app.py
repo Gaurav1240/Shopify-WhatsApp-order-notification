@@ -1,7 +1,7 @@
 import json
+import shopify
 from flask import Flask, request
 from twilio.rest import Client
-import shopify
 from datetime import datetime, timedelta
 
 
