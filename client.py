@@ -2,6 +2,8 @@
 
 import shopify
 from datetime import datetime, timedelta
+from twilio.rest import Client
+
 
 # Set up your Shopify API credentials
 shopify_config = {
@@ -39,3 +41,15 @@ def get_orders(days_back=7):
 # Example usage: retrieve all orders created in the past 7 days
 orders = get_orders(days_back=7)
 print(orders)
+
+
+def send_order_data_to_whatsapp(order_data):
+    account_sid = 'your_account_sid'
+    auth_token = 'your_auth_token'
+    client = Client(account_sid, auth_token)
+    message = client.messages.create(
+        body=f"New order created!\nOrder ID: {order_data['id']}\nTotal: {order_data['total_price']}",
+        from_='whatsapp:+14155238886',
+        to='whatsapp:+1234567890'
+    )
+    print(f"Sent WhatsApp message with SID {message.sid}")
