@@ -1,5 +1,6 @@
 # Shopify-WhatsApp-order-notification
 
+pip install flask
 
 To send Shopify order data to WhatsApp as orders come in, you can use the following steps:
 
