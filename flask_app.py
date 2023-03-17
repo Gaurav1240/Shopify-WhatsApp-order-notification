@@ -3,6 +3,7 @@ import shopify
 from flask import Flask, request
 from twilio.rest import Client
 from datetime import datetime, timedelta
+from client import get_orders, process_order
 
 
 shopify_config = {
