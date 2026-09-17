@@ -73,9 +73,60 @@ def _normalize_phone(phone):
     return re.sub(r"\D", "", phone or "")
 
 
+def _phones_match(a, b):
+    """Compare by the last 10 digits so a missing/differing country code (e.g.
+    WhatsApp's E.164 +1... vs. a locally-entered Shopify phone) still matches."""
+    a, b = _normalize_phone(a), _normalize_phone(b)
+    return bool(a) and bool(b) and a[-10:] == b[-10:]
+
+
 def find_orders_by_phone(phone, days_back=90):
-    target = _normalize_phone(phone)
-    if not target:
+    if not _normalize_phone(phone):
         return []
     orders = list_recent_orders(days_back=days_back, limit=250)
-    return [order for order in orders if _normalize_phone(order.get("phone")) == target]
+    return [order for order in orders if _phones_match(order.get("phone"), phone)]
+
+
+def cancel_order(order_id, reason=None):
+    """Cancel an order. Irreversible — callers must have explicit customer confirmation."""
+    _configure()
+    order = shopify.Order.find(order_id)
+    order.cancel(reason=reason)
+    return get_order(order_id)
+
+
+def refund_order(order_id, amount=None, reason=None):
+    """Refund an order's original payment in full (or `amount`) as a single transaction.
+
+    This is a simplified, whole-order refund: it does not itemize specific
+    line items, only reissues money against the order's captured payment.
+    Irreversible — callers must have explicit customer confirmation.
+    """
+    _configure()
+    order = shopify.Order.find(order_id)
+    transactions = order.transactions()
+    parent = next(
+        (t for t in transactions if t.kind in ("sale", "capture") and t.status == "success"),
+        None,
+    )
+    if parent is None:
+        raise ValueError(f"No refundable payment transaction found for order {order_id}")
+
+    refund_amount = str(amount) if amount is not None else order.total_price
+    transaction = shopify.Transaction(
+        {
+            "order_id": order.id,
+            "kind": "refund",
+            "amount": refund_amount,
+            "parent_id": parent.id,
+        }
+    )
+    if not transaction.save():
+        raise RuntimeError(f"Refund failed: {transaction.errors.full_messages()}")
+
+    return {
+        "order_id": order.id,
+        "refund_transaction_id": transaction.id,
+        "amount": refund_amount,
+        "reason": reason,
+    }

@@ -23,17 +23,24 @@ def _get_client():
     return _client
 
 
-def run_agent(system_prompt, user_message, tool_names=None, max_tokens=1024):
+def run_agent(system_prompt, user_message, tool_names=None, max_tokens=1024, history=None):
     """Run a tool-using agent to completion and return its final text reply.
 
     The agent decides for itself which of the allowed tools to call (if any)
     and in what order, looping until it produces a plain-text response or the
     iteration budget runs out.
+
+    `history` is an optional list of prior plain-text {"role", "content"}
+    turns (as produced by conversation_store) to give the agent memory of an
+    earlier exchange with the same user — for example so it can act on "yes,
+    go ahead" after it asked for confirmation in a previous message. Only the
+    final text reply is meant to be persisted back into that history; the
+    tool-call scaffolding built up within a single run_agent call is not.
     """
     client = _get_client()
     tools = TOOL_SCHEMAS if tool_names is None else [t for t in TOOL_SCHEMAS if t["name"] in tool_names]
 
-    messages = [{"role": "user", "content": user_message}]
+    messages = list(history or []) + [{"role": "user", "content": user_message}]
 
     for _ in range(MAX_TOOL_ITERATIONS):
         response = client.messages.create(

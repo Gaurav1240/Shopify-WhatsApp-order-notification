@@ -1,0 +1,78 @@
+import tools
+
+
+def test_run_tool_dispatches_to_handler(monkeypatch):
+    monkeypatch.setitem(tools._HANDLERS, "get_order", lambda i: {"id": i["order_id"], "called": True})
+
+    assert tools.run_tool("get_order", {"order_id": "42"}) == {"id": "42", "called": True}
+
+
+def test_run_tool_unknown_tool_returns_error():
+    assert tools.run_tool("does_not_exist", {}) == {"error": "Unknown tool: does_not_exist"}
+
+
+def test_run_tool_catches_handler_exceptions(monkeypatch):
+    def boom(_):
+        raise ValueError("kaboom")
+
+    monkeypatch.setitem(tools._HANDLERS, "get_order", boom)
+
+    assert tools.run_tool("get_order", {"order_id": "1"}) == {"error": "kaboom"}
+
+
+def test_tool_schema_names_match_handlers():
+    schema_names = {schema["name"] for schema in tools.TOOL_SCHEMAS}
+    assert schema_names == set(tools._HANDLERS.keys())
+
+
+def test_destructive_tools_require_order_id_in_schema():
+    for name in ("cancel_order", "refund_order"):
+        schema = next(s for s in tools.TOOL_SCHEMAS if s["name"] == name)
+        assert "order_id" in schema["input_schema"]["required"]
+
+
+def test_send_whatsapp_message_handler_calls_whatsapp_client(monkeypatch):
+    calls = {}
+
+    def fake_send(to, body):
+        calls["to"] = to
+        calls["body"] = body
+        return {"sid": "SM123"}
+
+    monkeypatch.setattr(tools.whatsapp_client, "send_whatsapp_message", fake_send)
+
+    result = tools._HANDLERS["send_whatsapp_message"]({"to": "+1555", "body": "hi"})
+
+    assert calls == {"to": "+1555", "body": "hi"}
+    assert result == {"sid": "SM123"}
+
+
+def test_cancel_order_handler_forwards_reason(monkeypatch):
+    calls = {}
+
+    def fake_cancel(order_id, reason=None):
+        calls["order_id"] = order_id
+        calls["reason"] = reason
+        return {"id": order_id}
+
+    monkeypatch.setattr(tools.shopify_client, "cancel_order", fake_cancel)
+
+    tools._HANDLERS["cancel_order"]({"order_id": "1001", "reason": "customer"})
+
+    assert calls == {"order_id": "1001", "reason": "customer"}
+
+
+def test_refund_order_handler_forwards_amount_and_reason(monkeypatch):
+    calls = {}
+
+    def fake_refund(order_id, amount=None, reason=None):
+        calls["order_id"] = order_id
+        calls["amount"] = amount
+        calls["reason"] = reason
+        return {"id": order_id}
+
+    monkeypatch.setattr(tools.shopify_client, "refund_order", fake_refund)
+
+    tools._HANDLERS["refund_order"]({"order_id": "1001", "amount": "10.00", "reason": "damaged"})
+
+    assert calls == {"order_id": "1001", "amount": "10.00", "reason": "damaged"}

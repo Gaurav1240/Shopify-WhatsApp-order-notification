@@ -53,6 +53,46 @@ TOOL_SCHEMAS = [
             "required": ["to", "body"],
         },
     },
+    {
+        "name": "cancel_order",
+        "description": (
+            "Cancel a Shopify order. Irreversible — only call this after the "
+            "customer has explicitly confirmed, in this conversation, that "
+            "they want the order cancelled."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "reason": {
+                    "type": "string",
+                    "enum": ["customer", "fraud", "inventory", "declined", "other"],
+                    "description": "Why the order is being cancelled.",
+                },
+            },
+            "required": ["order_id", "reason"],
+        },
+    },
+    {
+        "name": "refund_order",
+        "description": (
+            "Issue a refund against a Shopify order's original payment. "
+            "Irreversible — only call this after the customer has explicitly "
+            "confirmed, in this conversation, that they want a refund."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "amount": {
+                    "type": "string",
+                    "description": "Amount to refund. Omit to refund the full order total.",
+                },
+                "reason": {"type": "string", "description": "Internal note on why the refund was issued."},
+            },
+            "required": ["order_id"],
+        },
+    },
 ]
 
 _HANDLERS = {
@@ -61,6 +101,10 @@ _HANDLERS = {
     "list_recent_orders": lambda i: shopify_client.list_recent_orders(days_back=i.get("days_back", 7)),
     "find_orders_by_phone": lambda i: shopify_client.find_orders_by_phone(i["phone"]),
     "send_whatsapp_message": lambda i: whatsapp_client.send_whatsapp_message(i["to"], i["body"]),
+    "cancel_order": lambda i: shopify_client.cancel_order(i["order_id"], reason=i.get("reason")),
+    "refund_order": lambda i: shopify_client.refund_order(
+        i["order_id"], amount=i.get("amount"), reason=i.get("reason")
+    ),
 }
 
 

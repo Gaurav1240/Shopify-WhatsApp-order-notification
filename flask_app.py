@@ -13,13 +13,21 @@ from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
 from agent import run_agent
+from conversation_store import append_turn, get_history
 
 load_dotenv()
 
 app = Flask(__name__)
 
 NOTIFY_TOOLS = ["get_order", "get_order_status", "send_whatsapp_message"]
-SUPPORT_TOOLS = ["get_order", "get_order_status", "list_recent_orders", "find_orders_by_phone"]
+SUPPORT_TOOLS = [
+    "get_order",
+    "get_order_status",
+    "list_recent_orders",
+    "find_orders_by_phone",
+    "cancel_order",
+    "refund_order",
+]
 
 NOTIFY_SYSTEM_PROMPT = (
     "You are the order-notification agent for a Shopify store. You are given "
@@ -35,7 +43,13 @@ SUPPORT_SYSTEM_PROMPT = (
     "replying to a customer over WhatsApp. Use the available tools to look up "
     "their orders (match them by their phone number) and answer questions "
     "about order status, contents, or totals. Never invent order details you "
-    "haven't looked up. Keep replies short enough for a chat message."
+    "haven't looked up. Keep replies short enough for a chat message.\n\n"
+    "You can also cancel an order or issue a refund with the cancel_order / "
+    "refund_order tools. These are irreversible, so never call them on the "
+    "same turn a customer first asks for one: look up the order, summarize "
+    "it, and explicitly ask them to confirm. Only call cancel_order or "
+    "refund_order once the customer has clearly confirmed in a later message "
+    "in this conversation (e.g. they say 'yes' after you asked)."
 )
 
 
@@ -57,11 +71,14 @@ def whatsapp_webhook():
     from_number = request.form.get("From", "").removeprefix("whatsapp:")
     body = request.form.get("Body", "")
 
+    history = get_history(from_number)
     reply_text = run_agent(
         system_prompt=SUPPORT_SYSTEM_PROMPT,
         user_message=f"Message from {from_number}: {body}",
         tool_names=SUPPORT_TOOLS,
+        history=history,
     )
+    append_turn(from_number, body, reply_text)
 
     twiml = MessagingResponse()
     twiml.message(reply_text)

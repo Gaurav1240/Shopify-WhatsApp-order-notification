@@ -1,4 +1,6 @@
 .env
 monitor_state.json
+conversation_history.json
 __pycache__/
 *.pyc
+.pytest_cache/
