@@ -1,0 +1,5 @@
+flask
+ShopifyAPI
+twilio
+anthropic
+python-dotenv

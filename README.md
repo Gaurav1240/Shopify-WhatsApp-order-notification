@@ -1,20 +1,59 @@
-# Shopify-WhatsApp-order-notification
+# Shopify-WhatsApp order notification (agentic)
 
-pip install flask
+An agentic Shopify-to-WhatsApp integration: instead of a fixed message
+template and hardcoded rules, a Claude agent with tools decides what to say
+and when. Three agents share the same tool set (`tools.py`):
 
-To send Shopify order data to WhatsApp as orders come in, you can use the following steps:
+- **Notification agent** — triggered by the Shopify order-creation webhook.
+  Drafts a personalized WhatsApp confirmation and sends it.
+- **Support agent** — triggered by inbound WhatsApp messages. Looks up the
+  sender's orders and answers questions conversationally.
+- **Monitoring agent** (`monitor.py`) — polls Shopify on an interval, notices
+  order-status changes nobody told it about (shipped, cancelled, refunded,
+  ...), and decides on its own whether the customer should hear about it.
 
-Set up a webhook in your Shopify store to notify your application when a new order is created. You can do this by going to your Shopify admin panel, navigating to "Settings" > "Notifications" > "Webhooks" and creating a new webhook with the following information:
+## Setup
 
-URL: The URL of your application that will receive the webhook.
-Format: JSON.
+```
+pip install -r requirements.txt
+cp .env.example .env   # then fill in your real credentials
+```
 
-Events: Select "Order creation" under the "Order" section.
+Required environment variables (see `.env.example`):
 
-In your application, receive the webhook from Shopify and extract the relevant order data. You can use any programming language or framework to do this.
+- `SHOPIFY_API_KEY`, `SHOPIFY_API_PASSWORD`, `SHOPIFY_STORE_NAME`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
+- `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_MODEL`)
 
-Use a WhatsApp API provider to send a message to your desired recipient(s) with the order data. Some popular WhatsApp API providers include Twilio, Nexmo, and WhatsApp Business API.
+## Running
 
-Format the order data in a readable and concise way for the recipient(s). You can use a templating engine or library to make this process easier.
+Start the webhook server:
 
-Send the message using the WhatsApp API provider's SDK or API.
+```
+python flask_app.py
+```
+
+Optionally start the autonomous monitor in a separate process:
+
+```
+python monitor.py
+```
+
+## Wiring it up to Shopify and Twilio
+
+1. In your Shopify admin, go to **Settings > Notifications > Webhooks** and
+   create a webhook for the "Order creation" event, in JSON format, pointing
+   at `https://<your-host>/order_webhook`.
+2. In the Twilio console, set the WhatsApp sandbox/number's "when a message
+   comes in" webhook to `https://<your-host>/whatsapp_webhook`.
+
+## Project layout
+
+- `shopify_client.py` — Shopify API access (order lookups, recent orders,
+  phone matching).
+- `whatsapp_client.py` — sends WhatsApp messages via Twilio.
+- `tools.py` — the tool schemas and dispatcher every agent shares.
+- `agent.py` — the tool-use loop (Claude decides which tools to call).
+- `flask_app.py` — the two webhook endpoints.
+- `monitor.py` / `state_store.py` — the autonomous status-change monitor and
+  its small on-disk state.
