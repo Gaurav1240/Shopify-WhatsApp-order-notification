@@ -2,18 +2,22 @@
 
 - /order_webhook: Shopify calls this on order creation. An agent drafts and
   sends the WhatsApp confirmation itself (see NOTIFY_SYSTEM_PROMPT).
-- /whatsapp_webhook: Twilio calls this when a customer messages the WhatsApp
-  number. An agent looks up their order(s) and replies conversationally.
+- /whatsapp_webhook: Meta's WhatsApp Business Cloud API calls this (GET to
+  verify the webhook, POST to deliver inbound messages). An agent looks up
+  the sender's order(s) and replies conversationally; since Meta has no
+  reply-in-the-webhook-response mechanism like Twilio's TwiML, the reply is
+  sent back out explicitly via send_whatsapp_message.
 """
 
 import json
+import os
 
 from dotenv import load_dotenv
 from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
 
 from agent import run_agent
 from conversation_store import append_turn, get_history
+from whatsapp_client import send_whatsapp_message
 
 load_dotenv()
 
@@ -66,10 +70,31 @@ def order_webhook():
     return "Webhook received", 200
 
 
+@app.route("/whatsapp_webhook", methods=["GET"])
+def whatsapp_webhook_verify():
+    """Meta's one-time webhook verification handshake."""
+    if (
+        request.args.get("hub.mode") == "subscribe"
+        and request.args.get("hub.verify_token") == os.environ.get("WHATSAPP_VERIFY_TOKEN")
+    ):
+        return request.args.get("hub.challenge", ""), 200
+    return "Forbidden", 403
+
+
 @app.route("/whatsapp_webhook", methods=["POST"])
 def whatsapp_webhook():
-    from_number = request.form.get("From", "").removeprefix("whatsapp:")
-    body = request.form.get("Body", "")
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        value = payload["entry"][0]["changes"][0]["value"]
+        message = value["messages"][0]
+    except (KeyError, IndexError):
+        # Delivery/read status callbacks and other non-message events land
+        # here too; there's nothing for the agent to do with those.
+        return "EVENT_RECEIVED", 200
+
+    from_number = message["from"]
+    body = message.get("text", {}).get("body", "")
 
     history = get_history(from_number)
     reply_text = run_agent(
@@ -79,10 +104,9 @@ def whatsapp_webhook():
         history=history,
     )
     append_turn(from_number, body, reply_text)
+    send_whatsapp_message(from_number, reply_text)
 
-    twiml = MessagingResponse()
-    twiml.message(reply_text)
-    return str(twiml)
+    return "EVENT_RECEIVED", 200
 
 
 if __name__ == "__main__":

@@ -109,8 +109,9 @@ def test_find_orders_by_phone_ignores_mismatched_country_code(monkeypatch):
     orders = [{"id": 1, "phone": "555-123-4567"}]
     monkeypatch.setattr(shopify_client, "list_recent_orders", lambda **k: orders)
 
-    # Twilio's "From" arrives in E.164 with a country code; the order's phone
-    # on file may not have one. They should still match on the last 10 digits.
+    # Meta's webhook "from" field arrives with a country code; the order's
+    # phone on file may not have one. They should still match on the last
+    # 10 digits.
     assert shopify_client.find_orders_by_phone("+15551234567") == [orders[0]]
 
 

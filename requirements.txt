@@ -1,5 +1,5 @@
 flask
 ShopifyAPI
-twilio
+requests
 anthropic
 python-dotenv

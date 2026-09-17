@@ -48,42 +48,6 @@ def _install_fake_shopify():
     sys.modules["shopify"] = shopify
 
 
-def _install_fake_twilio():
-    if "twilio" in sys.modules:
-        return
-    twilio = types.ModuleType("twilio")
-    twilio_rest = types.ModuleType("twilio.rest")
-
-    class Client:
-        def __init__(self, *args, **kwargs):
-            raise NotImplementedError("patch twilio.rest.Client in the test")
-
-    twilio_rest.Client = Client
-    twilio.rest = twilio_rest
-
-    twiml = types.ModuleType("twilio.twiml")
-    messaging_response = types.ModuleType("twilio.twiml.messaging_response")
-
-    class MessagingResponse:
-        def __init__(self):
-            self._messages = []
-
-        def message(self, body):
-            self._messages.append(body)
-
-        def __str__(self):
-            bodies = "".join(f"<Message>{b}</Message>" for b in self._messages)
-            return f"<Response>{bodies}</Response>"
-
-    messaging_response.MessagingResponse = MessagingResponse
-    twiml.messaging_response = messaging_response
-
-    sys.modules["twilio"] = twilio
-    sys.modules["twilio.rest"] = twilio_rest
-    sys.modules["twilio.twiml"] = twiml
-    sys.modules["twilio.twiml.messaging_response"] = messaging_response
-
-
 def _install_fake_anthropic():
     if "anthropic" in sys.modules:
         return
@@ -110,7 +74,6 @@ def _install_fake_dotenv():
 
 
 _install_fake_shopify()
-_install_fake_twilio()
 _install_fake_anthropic()
 _install_fake_dotenv()
 
@@ -136,7 +99,7 @@ def _fake_credentials(monkeypatch):
     monkeypatch.setenv("SHOPIFY_API_KEY", "test_key")
     monkeypatch.setenv("SHOPIFY_API_PASSWORD", "test_password")
     monkeypatch.setenv("SHOPIFY_STORE_NAME", "test-store.myshopify.com")
-    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "test_sid")
-    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "test_token")
-    monkeypatch.setenv("TWILIO_WHATSAPP_FROM", "+14155238886")
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "test_whatsapp_token")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1234567890")
+    monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test_anthropic_key")

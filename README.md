@@ -26,7 +26,8 @@ cp .env.example .env   # then fill in your real credentials
 Required environment variables (see `.env.example`):
 
 - `SHOPIFY_API_KEY`, `SHOPIFY_API_PASSWORD`, `SHOPIFY_STORE_NAME`
-- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
+- `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`
+  (from Meta's WhatsApp Business Platform — see below)
 - `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_MODEL`)
 
 ## Running
@@ -50,22 +51,43 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-All third-party SDKs (Shopify, Twilio, Anthropic) are stubbed out in
-`tests/conftest.py`, so the suite runs offline with no real credentials.
+All third-party SDKs (Shopify, Meta's Graph API calls, Anthropic) are stubbed
+out in `tests/conftest.py`, so the suite runs offline with no real
+credentials.
 
-## Wiring it up to Shopify and Twilio
+## Wiring it up to Shopify and Meta's WhatsApp Business Platform
 
-1. In your Shopify admin, go to **Settings > Notifications > Webhooks** and
+This uses Meta's WhatsApp Business **Cloud API** directly (not Twilio).
+
+1. In [Meta for Developers](https://developers.facebook.com/apps), create an
+   app with the WhatsApp product added, or use an existing WhatsApp Business
+   Account. From the app's WhatsApp > API Setup page, note the **phone
+   number ID** and generate a **System User access token** with the
+   `whatsapp_business_messaging` permission (use a permanent token, not the
+   default 24-hour test token, for anything beyond quick testing).
+   - Meta also offers a **WhatsApp Business Tools MCP**
+     (`developers.facebook.com/documentation/mcp/whatsapp-business-tools-mcp`)
+     that lets an AI coding assistant walk you through this setup, create
+     message templates, and send test messages conversationally. It's a
+     separate, chat-driven developer tool (auth'd via Facebook Login for
+     Business) — it's not something this app calls at runtime, so it's worth
+     using once during setup but isn't a dependency here.
+2. Set `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, and a
+   `WHATSAPP_VERIFY_TOKEN` of your choosing in `.env`.
+3. In the app's WhatsApp > Configuration page, set the webhook callback URL
+   to `https://<your-host>/whatsapp_webhook` and the verify token to the same
+   `WHATSAPP_VERIFY_TOKEN` value — Meta will GET that URL once to confirm
+   ownership. Then subscribe to the `messages` webhook field.
+4. In your Shopify admin, go to **Settings > Notifications > Webhooks** and
    create a webhook for the "Order creation" event, in JSON format, pointing
    at `https://<your-host>/order_webhook`.
-2. In the Twilio console, set the WhatsApp sandbox/number's "when a message
-   comes in" webhook to `https://<your-host>/whatsapp_webhook`.
 
 ## Project layout
 
 - `shopify_client.py` — Shopify API access (order lookups, recent orders,
   phone matching, cancellations, refunds).
-- `whatsapp_client.py` — sends WhatsApp messages via Twilio.
+- `whatsapp_client.py` — sends WhatsApp messages via Meta's WhatsApp Business
+  Cloud API (Graph API).
 - `tools.py` — the tool schemas and dispatcher every agent shares.
 - `agent.py` — the tool-use loop (Claude decides which tools to call).
 - `flask_app.py` — the two webhook endpoints.
@@ -74,4 +96,4 @@ All third-party SDKs (Shopify, Twilio, Anthropic) are stubbed out in
 - `monitor.py` / `state_store.py` — the autonomous status-change monitor and
   its small on-disk state.
 - `tests/` — unit tests covering the tools, agent loop, webhooks, and
-  monitor, with the Shopify/Twilio/Anthropic SDKs stubbed out.
+  monitor, with the Shopify/WhatsApp/Anthropic SDKs stubbed out.

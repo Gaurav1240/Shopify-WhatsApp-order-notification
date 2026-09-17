@@ -1,30 +1,39 @@
-"""Thin wrapper around the Twilio WhatsApp API used by the agent's tools."""
+"""Thin wrapper around Meta's WhatsApp Business Cloud API (Graph API)."""
 
 import os
 
+import requests
 from dotenv import load_dotenv
-from twilio.rest import Client
 
 load_dotenv()
 
-_client = None
+GRAPH_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v21.0")
 
 
-def _get_client():
-    global _client
-    if _client is None:
-        _client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
-    return _client
+def _normalize_to(to):
+    """Meta wants a bare number with country code, no '+' or 'whatsapp:' prefix."""
+    return (to or "").removeprefix("whatsapp:").lstrip("+")
 
 
 def send_whatsapp_message(to, body):
-    client = _get_client()
-    from_number = os.environ["TWILIO_WHATSAPP_FROM"].removeprefix("whatsapp:")
-    to_number = to.removeprefix("whatsapp:") if to else to
+    phone_number_id = os.environ["WHATSAPP_PHONE_NUMBER_ID"]
+    access_token = os.environ["WHATSAPP_ACCESS_TOKEN"]
 
-    message = client.messages.create(
-        from_=f"whatsapp:{from_number}",
-        body=body,
-        to=f"whatsapp:{to_number}",
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": _normalize_to(to),
+        "type": "text",
+        "text": {"body": body},
+    }
+
+    response = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {access_token}"},
+        json=payload,
+        timeout=10,
     )
-    return {"sid": message.sid, "to": message.to, "body": message.body}
+    response.raise_for_status()
+
+    message_id = response.json()["messages"][0]["id"]
+    return {"id": message_id, "to": to, "body": body}
