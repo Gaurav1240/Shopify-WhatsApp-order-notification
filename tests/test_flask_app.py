@@ -164,3 +164,7 @@ def test_whatsapp_webhook_mcp_server_url_none_by_default(monkeypatch):
     client.post("/whatsapp_webhook", json=_meta_message_payload("15551234567", "hi"))
 
     assert captured["mcp_server_url"] is None
+
+
+def test_support_tools_include_save_customer_feedback():
+    assert "save_customer_feedback" in flask_app.SUPPORT_TOOLS

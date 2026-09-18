@@ -156,7 +156,44 @@ TOOL_SCHEMAS = [
             "required": ["order_id", "items"],
         },
     },
+    {
+        "name": "save_customer_feedback",
+        "description": (
+            "Save a customer's feedback — about their delivery experience, or why they're "
+            "returning/exchanging something — onto their Shopify customer record, visible to "
+            "store staff in Shopify admin (not just in this WhatsApp conversation)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "phone": {"type": "string", "description": "Customer's phone number, to find their Shopify customer record."},
+                "feedback_type": {
+                    "type": "string",
+                    "enum": ["delivery", "return"],
+                    "description": "'delivery' for delivery-experience feedback, 'return' for why they're returning something.",
+                },
+                "comment": {"type": "string", "description": "The customer's own words."},
+                "rating": {"type": "integer", "description": "Optional 1-5 satisfaction rating, if they gave one."},
+                "order_id": {"type": "string", "description": "The related order ID, if known."},
+            },
+            "required": ["phone", "feedback_type", "comment"],
+        },
+    },
 ]
+
+def _save_customer_feedback(tool_input):
+    customer_id = shopify_client.find_customer_id_by_phone(tool_input["phone"])
+    if not customer_id:
+        return {"error": "No Shopify customer record found for this phone number"}
+
+    feedback = {"comment": tool_input["comment"]}
+    if tool_input.get("rating") is not None:
+        feedback["rating"] = tool_input["rating"]
+    if tool_input.get("order_id"):
+        feedback["order_id"] = tool_input["order_id"]
+
+    return shopify_client.save_customer_feedback(customer_id, tool_input["feedback_type"], feedback)
+
 
 _HANDLERS = {
     "get_order": lambda i: shopify_client.get_order(i["order_id"]),
@@ -174,6 +211,7 @@ _HANDLERS = {
     "request_return": lambda i: shopify_client.request_return(
         i["order_id"], i["items"], reason=i.get("reason"), note=i.get("note")
     ),
+    "save_customer_feedback": _save_customer_feedback,
 }
 
 

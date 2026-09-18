@@ -133,3 +133,49 @@ def test_request_return_handler_forwards_all_fields(monkeypatch):
     tools._HANDLERS["request_return"]({"order_id": "1001", "items": items, "reason": "wrong_item", "note": "wrong size"})
 
     assert calls == {"order_id": "1001", "items": items, "reason": "wrong_item", "note": "wrong size"}
+
+
+def test_save_customer_feedback_handler_resolves_customer_and_saves(monkeypatch):
+    monkeypatch.setattr(tools.shopify_client, "find_customer_id_by_phone", lambda phone: "gid://shopify/Customer/777")
+
+    calls = {}
+
+    def fake_save(customer_id, feedback_type, feedback):
+        calls.update({"customer_id": customer_id, "feedback_type": feedback_type, "feedback": feedback})
+        return {"metafield_id": "gid://shopify/Metafield/1"}
+
+    monkeypatch.setattr(tools.shopify_client, "save_customer_feedback", fake_save)
+
+    result = tools._HANDLERS["save_customer_feedback"](
+        {"phone": "+15551234567", "feedback_type": "delivery", "comment": "fast!", "rating": 5, "order_id": "1001"}
+    )
+
+    assert calls == {
+        "customer_id": "gid://shopify/Customer/777",
+        "feedback_type": "delivery",
+        "feedback": {"comment": "fast!", "rating": 5, "order_id": "1001"},
+    }
+    assert result == {"metafield_id": "gid://shopify/Metafield/1"}
+
+
+def test_save_customer_feedback_handler_returns_error_when_no_customer_found(monkeypatch):
+    monkeypatch.setattr(tools.shopify_client, "find_customer_id_by_phone", lambda phone: None)
+
+    result = tools._HANDLERS["save_customer_feedback"]({"phone": "+15551234567", "feedback_type": "delivery", "comment": "fast!"})
+
+    assert "error" in result
+
+
+def test_save_customer_feedback_handler_omits_optional_fields_when_absent(monkeypatch):
+    monkeypatch.setattr(tools.shopify_client, "find_customer_id_by_phone", lambda phone: "gid://shopify/Customer/777")
+
+    calls = {}
+    monkeypatch.setattr(
+        tools.shopify_client,
+        "save_customer_feedback",
+        lambda customer_id, feedback_type, feedback: calls.update({"feedback": feedback}),
+    )
+
+    tools._HANDLERS["save_customer_feedback"]({"phone": "+15551234567", "feedback_type": "return", "comment": "wrong size"})
+
+    assert calls["feedback"] == {"comment": "wrong size"}

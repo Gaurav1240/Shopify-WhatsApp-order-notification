@@ -31,7 +31,12 @@ MONITOR_SYSTEM_PROMPT = (
     "write a short, friendly message and send it to their phone number with "
     "the send_whatsapp_message tool. If the change isn't worth notifying the "
     "customer about, or there is no phone number on file, do nothing and "
-    "briefly say why not."
+    "briefly say why not.\n\n"
+    "If the order just became fulfilled/delivered, add a brief, casual ask "
+    "for delivery feedback at the end of the message (e.g. 'How was your "
+    "delivery experience? Just reply and let us know!') — whatever they "
+    "reply with will be picked up and saved automatically, you don't need "
+    "to do anything else with it here."
 )
 
 

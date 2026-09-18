@@ -8,6 +8,7 @@ from Shopify's published GraphQL docs, not verified against a live schema
 smoke-test against a dev store before relying on this in production.
 """
 
+import json
 import os
 import re
 from datetime import datetime, timedelta
@@ -56,7 +57,7 @@ _ORDER_FIELDS = """
   createdAt
   totalPriceSet { shopMoney { amount currencyCode } }
   shippingAddress { phone }
-  customer { phone }
+  customer { id phone }
   lineItems(first: 50) {
     edges { node { title quantity } }
   }
@@ -64,15 +65,15 @@ _ORDER_FIELDS = """
 
 
 def _order_from_node(node):
-    phone = (node.get("shippingAddress") or {}).get("phone")
-    if not phone:
-        phone = (node.get("customer") or {}).get("phone")
+    customer = node.get("customer") or {}
+    phone = (node.get("shippingAddress") or {}).get("phone") or customer.get("phone")
 
     return {
         "id": _gid_to_id(node["id"]),
         "name": node["name"],
         "email": node.get("email"),
         "phone": phone,
+        "customer_id": customer.get("id"),
         "total_price": node["totalPriceSet"]["shopMoney"]["amount"],
         "financial_status": node.get("displayFinancialStatus"),
         "fulfillment_status": node.get("displayFulfillmentStatus"),
@@ -355,3 +356,58 @@ def request_return(order_id, items, reason=None, note=None):
         "return_id": result["return"]["id"],
         "status": result["return"]["status"],
     }
+
+
+def find_customer_id_by_phone(phone, days_back=90):
+    """Resolve a Shopify customer GID from a phone number, by reusing the
+    already-robust order phone matching rather than a separate (unverified)
+    customer search query."""
+    for order in find_orders_by_phone(phone, days_back=days_back):
+        if order.get("customer_id"):
+            return order["customer_id"]
+    return None
+
+
+def set_customer_metafield(customer_id, namespace, key, value, value_type="json"):
+    """Write (create or overwrite) a metafield on a Customer, visible on
+    their profile in Shopify admin under Metafields."""
+    result = _graphql(
+        """
+        mutation SetCustomerMetafield($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { id namespace key }
+            userErrors { field message }
+          }
+        }
+        """,
+        {
+            "metafields": [
+                {
+                    "ownerId": _to_gid("Customer", customer_id),
+                    "namespace": namespace,
+                    "key": key,
+                    "type": value_type,
+                    "value": value,
+                }
+            ]
+        },
+    )["metafieldsSet"]
+
+    errors = result["userErrors"]
+    if errors:
+        raise RuntimeError(f"Saving customer metafield failed: {errors}")
+
+    return {"metafield_id": result["metafields"][0]["id"], "namespace": namespace, "key": key}
+
+
+def save_customer_feedback(customer_id, feedback_type, feedback):
+    """Write a customer's feedback (delivery experience, or why they're
+    returning something) onto their Shopify customer record as a JSON
+    metafield under the "whatsapp_agent" namespace, so store staff can see
+    it on the customer's profile in Shopify admin without needing WhatsApp
+    access. Stores only the latest feedback of each type, not a history —
+    each call overwrites the previous one for that `feedback_type`.
+    """
+    key = f"{feedback_type}_feedback"
+    value = json.dumps({**feedback, "recorded_at": datetime.now().isoformat()})
+    return set_customer_metafield(customer_id, "whatsapp_agent", key, value)

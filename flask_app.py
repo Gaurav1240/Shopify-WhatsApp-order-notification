@@ -39,6 +39,7 @@ SUPPORT_TOOLS = [
     "find_abandoned_checkout_by_phone",
     "get_returnable_items",
     "request_return",
+    "save_customer_feedback",
 ]
 
 NOTIFY_SYSTEM_PROMPT = (
@@ -71,7 +72,15 @@ SUPPORT_SYSTEM_PROMPT = (
     "use get_returnable_items to see what's eligible on their order, "
     "summarize it, and ask which item(s) and why before doing anything. "
     "Only call request_return once the customer has clearly confirmed in a "
-    "later message in this conversation."
+    "later message in this conversation. Always ask why they're returning "
+    "it if they haven't already said, and once you have that reason, save "
+    "it with save_customer_feedback (feedback_type='return') in addition to "
+    "calling request_return — the store can't see a WhatsApp conversation, "
+    "so this is what makes their reason visible to staff.\n\n"
+    "If a customer replies with feedback about their delivery experience "
+    "(a rating, or comments like 'arrived fast' or 'box was damaged'), "
+    "thank them briefly and save it with save_customer_feedback "
+    "(feedback_type='delivery') so store staff can see it too."
 )
 
 

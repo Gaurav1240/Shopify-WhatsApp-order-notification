@@ -15,10 +15,17 @@ and when. Three agents share the same tool set (`tools.py`):
   never act on the same turn it was asked. For returns specifically, when
   `STOREFRONT_MCP_URL` is configured it first checks the store's actual
   return policy (window, excluded items, who pays shipping) via Shopify's
-  Storefront MCP rather than guessing, before deciding what's eligible.
+  Storefront MCP rather than guessing, before deciding what's eligible. It
+  also captures customer feedback — delivery-experience comments, and why
+  a customer is returning something — and writes it onto that customer's
+  Shopify record as a metafield (see below), so store staff can see it in
+  Shopify admin without needing WhatsApp access.
 - **Monitoring agent** (`monitor.py`) — polls Shopify on an interval, notices
   order-status changes nobody told it about (shipped, cancelled, refunded,
   ...), and decides on its own whether the customer should hear about it.
+  When an order becomes fulfilled/delivered, it tacks on a casual ask for
+  delivery feedback — whatever the customer replies with is picked up and
+  saved by the support agent, same as above.
 - **Cart-recovery agent** (`abandoned_cart.py`) — polls Shopify's abandoned-
   checkouts list for carts that were started but never completed. For each
   one it hasn't already messaged, it drafts and sends a friendly WhatsApp
@@ -79,11 +86,10 @@ Meta's WhatsApp Business **Cloud API** directly (not Twilio).
 ### Shopify
 
 1. In your Shopify admin, go to **Settings > Apps and sales channels >
-   Develop apps**, create a custom app, and configure Admin API scopes
-   covering orders, order edits/returns, and (if you want abandoned-cart
-   recovery) `read_marketing_events`-adjacent checkout access — in practice:
-   `read_orders`, `write_orders`, `read_returns`, `write_returns`. Install
-   the app and copy its **Admin API access token** into
+   Develop apps**, create a custom app, and configure Admin API scopes:
+   `read_orders`, `write_orders`, `read_returns`, `write_returns`, and
+   `write_customers` (needed to save feedback as a customer metafield).
+   Install the app and copy its **Admin API access token** into
    `SHOPIFY_ACCESS_TOKEN`; set `SHOPIFY_STORE_NAME` to
    `your-store.myshopify.com`.
 2. Set `SHOPIFY_API_VERSION` to Shopify's current quarterly API version
@@ -100,10 +106,12 @@ Meta's WhatsApp Business **Cloud API** directly (not Twilio).
 > written from Shopify's published Admin GraphQL docs, but this project was
 > built in a sandboxed environment with no network access to Shopify's API
 > or schema explorer, so the exact field/enum names for `orderCancel`,
-> `refundCreate`, `abandonedCheckouts`, and `returnRequest` are **not**
-> verified against a live store. Smoke-test each flow against a Shopify dev
-> store before relying on it in production — check current field names in
-> Shopify's GraphiQL app if a call fails.
+> `refundCreate`, `abandonedCheckouts`, `returnRequest`, and
+> `metafieldsSet` are **not** verified against a live store. Smoke-test each
+> flow against a Shopify dev store before relying on it in production —
+> check current field names in Shopify's GraphiQL app if a call fails.
+> `metafieldsSet` is the most stable/long-standing of these, so it's the
+> least likely to have drifted.
 
 ### Meta WhatsApp
 
@@ -127,11 +135,28 @@ Meta's WhatsApp Business **Cloud API** directly (not Twilio).
    `WHATSAPP_VERIFY_TOKEN` value — Meta will GET that URL once to confirm
    ownership. Then subscribe to the `messages` webhook field.
 
+## Where customer feedback shows up in Shopify admin
+
+The support agent writes feedback onto the customer's own record using
+Shopify's [metafields](https://help.shopify.com/en/manual/custom-data) —
+custom fields you can attach to any resource. It writes two possible keys,
+both under the `whatsapp_agent` namespace, each holding the *most recent*
+feedback of that type as JSON (not a running history):
+
+- `whatsapp_agent.delivery_feedback` — `{comment, rating?, order_id?, recorded_at}`
+- `whatsapp_agent.return_feedback` — `{comment, order_id?, recorded_at}`
+
+To see it: open the customer in Shopify admin (**Customers > [name]**),
+scroll to **Metafields**, and add "WhatsApp Agent" definitions for these
+two keys (Settings > Custom data > Customers > Add definition) if you want
+them to render as labeled fields rather than raw JSON.
+
 ## Project layout
 
 - `shopify_client.py` — Shopify GraphQL Admin API access (order lookups,
   recent orders, phone matching, cancellations, refunds, abandoned
-  checkouts, returns) via raw `requests` calls, no SDK.
+  checkouts, returns, customer feedback metafields) via raw `requests`
+  calls, no SDK.
 - `whatsapp_client.py` — sends WhatsApp messages via Meta's WhatsApp Business
   Cloud API (Graph API).
 - `tools.py` — the tool schemas and dispatcher every agent shares.

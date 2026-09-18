@@ -408,3 +408,100 @@ def test_request_return_raises_on_user_errors(monkeypatch):
         assert False, "expected RuntimeError"
     except RuntimeError:
         pass
+
+
+def test_get_order_extracts_customer_id(monkeypatch):
+    node = dict(ORDER_NODE, customer={"id": "gid://shopify/Customer/777", "phone": None})
+    monkeypatch.setattr(shopify_client, "requests", type("R", (), {"post": staticmethod(_post_returning({"data": {"order": node}}))}))
+
+    result = shopify_client.get_order(1001)
+
+    assert result["customer_id"] == "gid://shopify/Customer/777"
+
+
+def test_find_customer_id_by_phone_returns_first_match(monkeypatch):
+    orders = [
+        {"id": 1, "phone": "555-123-4567", "customer_id": None},
+        {"id": 2, "phone": "555-123-4567", "customer_id": "gid://shopify/Customer/777"},
+    ]
+    monkeypatch.setattr(shopify_client, "find_orders_by_phone", lambda phone, days_back=90: orders)
+
+    assert shopify_client.find_customer_id_by_phone("+15551234567") == "gid://shopify/Customer/777"
+
+
+def test_find_customer_id_by_phone_returns_none_when_no_match(monkeypatch):
+    monkeypatch.setattr(shopify_client, "find_orders_by_phone", lambda phone, days_back=90: [])
+
+    assert shopify_client.find_customer_id_by_phone("+15551234567") is None
+
+
+def test_set_customer_metafield_builds_input_and_returns_confirmation(monkeypatch):
+    created = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        created.update(json["variables"]["metafields"][0])
+        return FakeHTTPResponse(
+            {
+                "data": {
+                    "metafieldsSet": {
+                        "metafields": [{"id": "gid://shopify/Metafield/1", "namespace": "whatsapp_agent", "key": "delivery_feedback"}],
+                        "userErrors": [],
+                    }
+                }
+            }
+        )
+
+    monkeypatch.setattr(shopify_client, "requests", type("R", (), {"post": staticmethod(fake_post)}))
+
+    result = shopify_client.set_customer_metafield(777, "whatsapp_agent", "delivery_feedback", '{"rating": 5}')
+
+    assert created["ownerId"] == "gid://shopify/Customer/777"
+    assert created["namespace"] == "whatsapp_agent"
+    assert created["key"] == "delivery_feedback"
+    assert created["type"] == "json"
+    assert result == {"metafield_id": "gid://shopify/Metafield/1", "namespace": "whatsapp_agent", "key": "delivery_feedback"}
+
+
+def test_set_customer_metafield_raises_on_user_errors(monkeypatch):
+    monkeypatch.setattr(
+        shopify_client,
+        "requests",
+        type(
+            "R",
+            (),
+            {
+                "post": staticmethod(
+                    _post_returning({"data": {"metafieldsSet": {"metafields": [], "userErrors": [{"field": "value", "message": "invalid json"}]}}})
+                )
+            },
+        ),
+    )
+
+    try:
+        shopify_client.set_customer_metafield(777, "whatsapp_agent", "delivery_feedback", "not json")
+        assert False, "expected RuntimeError"
+    except RuntimeError:
+        pass
+
+
+def test_save_customer_feedback_writes_json_with_timestamp(monkeypatch):
+    captured = {}
+
+    def fake_set_metafield(customer_id, namespace, key, value, value_type="json"):
+        captured.update({"customer_id": customer_id, "namespace": namespace, "key": key, "value": value})
+        return {"metafield_id": "gid://shopify/Metafield/1"}
+
+    monkeypatch.setattr(shopify_client, "set_customer_metafield", fake_set_metafield)
+
+    shopify_client.save_customer_feedback(777, "delivery", {"rating": 5, "comment": "fast!"})
+
+    assert captured["customer_id"] == 777
+    assert captured["namespace"] == "whatsapp_agent"
+    assert captured["key"] == "delivery_feedback"
+
+    import json
+
+    stored = json.loads(captured["value"])
+    assert stored["rating"] == 5
+    assert stored["comment"] == "fast!"
+    assert "recorded_at" in stored
