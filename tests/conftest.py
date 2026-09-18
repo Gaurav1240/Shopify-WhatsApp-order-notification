@@ -1,8 +1,8 @@
 """Hermetic stand-ins for the third-party SDKs so tests never hit the network.
 
-Each fake is installed into sys.modules only if the real package isn't
-already importable there, and individual tests monkeypatch the specific
-methods/classes they care about (e.g. shopify.Order.find).
+Shopify is now called directly over HTTP (via `requests`), so it needs no
+fake module — tests monkeypatch `requests.post` instead. Anthropic still
+needs a stand-in since its client is constructed at import time.
 """
 
 import os
@@ -14,50 +14,18 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _install_fake_shopify():
-    if "shopify" in sys.modules:
-        return
-    shopify = types.ModuleType("shopify")
-
-    class Session:
-        @staticmethod
-        def setup(**kwargs):
-            pass
-
-    class ShopifyResource:
-        @staticmethod
-        def set_site(site):
-            pass
-
-    class Order:
-        @staticmethod
-        def find(*args, **kwargs):
-            raise NotImplementedError("patch shopify.Order.find in the test")
-
-    class Transaction:
-        def __init__(self, attrs=None):
-            self.attrs = attrs or {}
-
-        def save(self):
-            raise NotImplementedError("patch shopify.Transaction in the test")
-
-    class Checkout:
-        @staticmethod
-        def find(*args, **kwargs):
-            raise NotImplementedError("patch shopify.Checkout.find in the test")
-
-    shopify.Session = Session
-    shopify.ShopifyResource = ShopifyResource
-    shopify.Order = Order
-    shopify.Transaction = Transaction
-    shopify.Checkout = Checkout
-    sys.modules["shopify"] = shopify
-
-
 def _install_fake_anthropic():
     if "anthropic" in sys.modules:
         return
     anthropic = types.ModuleType("anthropic")
+
+    class _BetaMessages:
+        def create(self, *args, **kwargs):
+            raise NotImplementedError("patch client.beta.messages.create in the test")
+
+    class _Beta:
+        def __init__(self):
+            self.messages = _BetaMessages()
 
     class Anthropic:
         def __init__(self, *args, **kwargs):
@@ -79,7 +47,6 @@ def _install_fake_dotenv():
     sys.modules["dotenv"] = dotenv
 
 
-_install_fake_shopify()
 _install_fake_anthropic()
 _install_fake_dotenv()
 
@@ -103,10 +70,9 @@ def _isolated_state_files(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _fake_credentials(monkeypatch):
-    """Dummy credentials so _configure()/client construction never KeyErrors in tests."""
-    monkeypatch.setenv("SHOPIFY_API_KEY", "test_key")
-    monkeypatch.setenv("SHOPIFY_API_PASSWORD", "test_password")
+    """Dummy credentials so client construction never KeyErrors in tests."""
     monkeypatch.setenv("SHOPIFY_STORE_NAME", "test-store.myshopify.com")
+    monkeypatch.setenv("SHOPIFY_ACCESS_TOKEN", "test_shopify_token")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "test_whatsapp_token")
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1234567890")
     monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "test_verify_token")

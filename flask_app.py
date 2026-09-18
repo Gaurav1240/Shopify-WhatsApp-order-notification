@@ -23,6 +23,11 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# Optional: a Shopify store's Storefront MCP endpoint (product catalog,
+# policies/FAQs). When set, the support agent can consult the store's real
+# return policy instead of guessing. See README for the expected URL shape.
+STOREFRONT_MCP_URL = os.environ.get("STOREFRONT_MCP_URL")
+
 NOTIFY_TOOLS = ["get_order", "get_order_status", "send_whatsapp_message"]
 SUPPORT_TOOLS = [
     "get_order",
@@ -32,6 +37,8 @@ SUPPORT_TOOLS = [
     "cancel_order",
     "refund_order",
     "find_abandoned_checkout_by_phone",
+    "get_returnable_items",
+    "request_return",
 ]
 
 NOTIFY_SYSTEM_PROMPT = (
@@ -57,7 +64,14 @@ SUPPORT_SYSTEM_PROMPT = (
     "in this conversation (e.g. they say 'yes' after you asked).\n\n"
     "If a customer asks about something they were trying to buy or a cart "
     "they didn't finish, use find_abandoned_checkout_by_phone to check for "
-    "an incomplete checkout and share the recovery link if you find one."
+    "an incomplete checkout and share the recovery link if you find one.\n\n"
+    "If a customer wants to return or exchange an item: first, if you have "
+    "storefront tools available, check the store's actual return policy "
+    "(window, excluded items, who pays shipping) rather than guessing. Then "
+    "use get_returnable_items to see what's eligible on their order, "
+    "summarize it, and ask which item(s) and why before doing anything. "
+    "Only call request_return once the customer has clearly confirmed in a "
+    "later message in this conversation."
 )
 
 
@@ -106,6 +120,7 @@ def whatsapp_webhook():
         user_message=f"Message from {from_number}: {body}",
         tool_names=SUPPORT_TOOLS,
         history=history,
+        mcp_server_url=STOREFRONT_MCP_URL,
     )
     append_turn(from_number, body, reply_text)
     send_whatsapp_message(from_number, reply_text)

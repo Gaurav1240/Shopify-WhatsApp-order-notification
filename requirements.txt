@@ -1,5 +1,4 @@
 flask
-ShopifyAPI
 requests
 anthropic
 python-dotenv

@@ -115,6 +115,47 @@ TOOL_SCHEMAS = [
             "required": ["order_id"],
         },
     },
+    {
+        "name": "get_returnable_items",
+        "description": "List an order's fulfilled line items that are eligible to return, with the IDs request_return needs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string", "description": "The Shopify order ID."}},
+            "required": ["order_id"],
+        },
+    },
+    {
+        "name": "request_return",
+        "description": (
+            "Request a return for one or more items on an order (from get_returnable_items). "
+            "Does not refund money by itself. Irreversible-ish — only call this after the "
+            "customer has explicitly confirmed, in this conversation, which item(s) and why."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "items": {
+                    "type": "array",
+                    "description": "Items to return, from get_returnable_items.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "fulfillment_line_item_id": {"type": "string"},
+                            "quantity": {"type": "integer"},
+                        },
+                        "required": ["fulfillment_line_item_id", "quantity"],
+                    },
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Short return reason category, e.g. 'wrong_item', 'defective', 'unwanted'.",
+                },
+                "note": {"type": "string", "description": "The customer's own explanation, in more detail."},
+            },
+            "required": ["order_id", "items"],
+        },
+    },
 ]
 
 _HANDLERS = {
@@ -128,6 +169,10 @@ _HANDLERS = {
     "cancel_order": lambda i: shopify_client.cancel_order(i["order_id"], reason=i.get("reason")),
     "refund_order": lambda i: shopify_client.refund_order(
         i["order_id"], amount=i.get("amount"), reason=i.get("reason")
+    ),
+    "get_returnable_items": lambda i: shopify_client.get_returnable_items(i["order_id"]),
+    "request_return": lambda i: shopify_client.request_return(
+        i["order_id"], i["items"], reason=i.get("reason"), note=i.get("note")
     ),
 }
 

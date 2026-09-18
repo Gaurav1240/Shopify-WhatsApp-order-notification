@@ -31,9 +31,15 @@ class FakeMessages:
         return self._responses.pop(0)
 
 
-class FakeClient:
+class FakeBeta:
     def __init__(self, responses):
         self.messages = FakeMessages(responses)
+
+
+class FakeClient:
+    def __init__(self, responses, beta_responses=None):
+        self.messages = FakeMessages(responses)
+        self.beta = FakeBeta(beta_responses or [])
 
 
 def test_run_agent_returns_text_when_no_tool_use(monkeypatch):
@@ -120,3 +126,27 @@ def test_run_agent_with_no_tool_names_sends_all_tools(monkeypatch):
 
     sent_tools = fake_client.messages.calls[0]["tools"]
     assert len(sent_tools) == len(agent.TOOL_SCHEMAS)
+
+
+def test_run_agent_with_mcp_server_url_uses_beta_client(monkeypatch):
+    fake_client = FakeClient(responses=[], beta_responses=[FakeResponse("end_turn", [TextBlock("policy says 30 days")])])
+    monkeypatch.setattr(agent, "_get_client", lambda: fake_client)
+
+    result = agent.run_agent("sys", "what's your return policy?", mcp_server_url="https://store.myshopify.com/api/mcp")
+
+    assert result == "policy says 30 days"
+    assert fake_client.messages.calls == []  # never used the non-beta path
+    beta_call = fake_client.beta.messages.calls[0]
+    assert beta_call["mcp_servers"] == [
+        {"type": "url", "url": "https://store.myshopify.com/api/mcp", "name": "shopify_storefront"}
+    ]
+    assert beta_call["betas"] == ["mcp-client-2025-04-04"]
+
+
+def test_run_agent_without_mcp_server_url_uses_plain_client(monkeypatch):
+    fake_client = FakeClient([FakeResponse("end_turn", [TextBlock("ok")])])
+    monkeypatch.setattr(agent, "_get_client", lambda: fake_client)
+
+    agent.run_agent("sys", "hi")
+
+    assert fake_client.beta.messages.calls == []

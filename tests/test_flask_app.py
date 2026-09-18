@@ -130,3 +130,37 @@ def test_support_tools_include_cancel_and_refund():
     assert "cancel_order" in flask_app.SUPPORT_TOOLS
     assert "refund_order" in flask_app.SUPPORT_TOOLS
     assert "send_whatsapp_message" not in flask_app.SUPPORT_TOOLS
+
+
+def test_support_tools_include_returns_tools():
+    assert "get_returnable_items" in flask_app.SUPPORT_TOOLS
+    assert "request_return" in flask_app.SUPPORT_TOOLS
+
+
+def test_whatsapp_webhook_passes_configured_storefront_mcp_url(monkeypatch):
+    monkeypatch.setattr(flask_app, "STOREFRONT_MCP_URL", "https://store.myshopify.com/api/mcp")
+    monkeypatch.setattr(flask_app, "get_history", lambda phone: [])
+    monkeypatch.setattr(flask_app, "append_turn", lambda *a: None)
+    monkeypatch.setattr(flask_app, "send_whatsapp_message", lambda *a: None)
+
+    captured = {}
+    monkeypatch.setattr(flask_app, "run_agent", lambda **kwargs: captured.update(kwargs) or "ok")
+
+    client = flask_app.app.test_client()
+    client.post("/whatsapp_webhook", json=_meta_message_payload("15551234567", "can I return this?"))
+
+    assert captured["mcp_server_url"] == "https://store.myshopify.com/api/mcp"
+
+
+def test_whatsapp_webhook_mcp_server_url_none_by_default(monkeypatch):
+    monkeypatch.setattr(flask_app, "get_history", lambda phone: [])
+    monkeypatch.setattr(flask_app, "append_turn", lambda *a: None)
+    monkeypatch.setattr(flask_app, "send_whatsapp_message", lambda *a: None)
+
+    captured = {}
+    monkeypatch.setattr(flask_app, "run_agent", lambda **kwargs: captured.update(kwargs) or "ok")
+
+    client = flask_app.app.test_client()
+    client.post("/whatsapp_webhook", json=_meta_message_payload("15551234567", "hi"))
+
+    assert captured["mcp_server_url"] is None

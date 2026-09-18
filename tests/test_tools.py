@@ -104,3 +104,32 @@ def test_find_abandoned_checkout_by_phone_handler_forwards_phone(monkeypatch):
     tools._HANDLERS["find_abandoned_checkout_by_phone"]({"phone": "+15551234567"})
 
     assert calls == {"phone": "+15551234567"}
+
+
+def test_get_returnable_items_handler_forwards_order_id(monkeypatch):
+    calls = {}
+
+    def fake_get(order_id):
+        calls["order_id"] = order_id
+        return []
+
+    monkeypatch.setattr(tools.shopify_client, "get_returnable_items", fake_get)
+
+    tools._HANDLERS["get_returnable_items"]({"order_id": "1001"})
+
+    assert calls == {"order_id": "1001"}
+
+
+def test_request_return_handler_forwards_all_fields(monkeypatch):
+    calls = {}
+
+    def fake_request(order_id, items, reason=None, note=None):
+        calls.update({"order_id": order_id, "items": items, "reason": reason, "note": note})
+        return {"status": "OPEN"}
+
+    monkeypatch.setattr(tools.shopify_client, "request_return", fake_request)
+
+    items = [{"fulfillment_line_item_id": "gid://x/1", "quantity": 1}]
+    tools._HANDLERS["request_return"]({"order_id": "1001", "items": items, "reason": "wrong_item", "note": "wrong size"})
+
+    assert calls == {"order_id": "1001", "items": items, "reason": "wrong_item", "note": "wrong size"}

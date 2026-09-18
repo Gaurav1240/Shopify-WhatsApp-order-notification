@@ -9,9 +9,13 @@ and when. Three agents share the same tool set (`tools.py`):
 - **Support agent** — triggered by inbound WhatsApp messages. Looks up the
   sender's orders and answers questions conversationally, remembering prior
   messages from the same phone number (`conversation_store.py`) so it can
-  handle multi-turn flows. It can also cancel an order or issue a refund, but
-  only after the customer has explicitly confirmed in the conversation — it's
-  instructed to always ask first and never act on the same turn it was asked.
+  handle multi-turn flows. It can cancel an order, issue a refund, or
+  request a return/exchange — all only after the customer has explicitly
+  confirmed in the conversation; it's instructed to always ask first and
+  never act on the same turn it was asked. For returns specifically, when
+  `STOREFRONT_MCP_URL` is configured it first checks the store's actual
+  return policy (window, excluded items, who pays shipping) via Shopify's
+  Storefront MCP rather than guessing, before deciding what's eligible.
 - **Monitoring agent** (`monitor.py`) — polls Shopify on an interval, notices
   order-status changes nobody told it about (shipped, cancelled, refunded,
   ...), and decides on its own whether the customer should hear about it.
@@ -32,10 +36,12 @@ cp .env.example .env   # then fill in your real credentials
 
 Required environment variables (see `.env.example`):
 
-- `SHOPIFY_API_KEY`, `SHOPIFY_API_PASSWORD`, `SHOPIFY_STORE_NAME`
+- `SHOPIFY_STORE_NAME`, `SHOPIFY_ACCESS_TOKEN` (an Admin API access token —
+  see below)
 - `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`
   (from Meta's WhatsApp Business Platform — see below)
 - `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_MODEL`)
+- `STOREFRONT_MCP_URL` (optional — enables real return-policy lookups)
 
 ## Running
 
@@ -60,13 +66,46 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-All third-party SDKs (Shopify, Meta's Graph API calls, Anthropic) are stubbed
-out in `tests/conftest.py`, so the suite runs offline with no real
-credentials.
+Shopify is called directly over HTTP (`requests`), so tests monkeypatch
+`requests.post` with canned GraphQL responses rather than stubbing an SDK.
+Anthropic and Meta's Graph API calls are stubbed the same way, so the suite
+runs offline with no real credentials.
 
 ## Wiring it up to Shopify and Meta's WhatsApp Business Platform
 
-This uses Meta's WhatsApp Business **Cloud API** directly (not Twilio).
+This talks to Shopify's **GraphQL Admin API** directly (no SDK) and to
+Meta's WhatsApp Business **Cloud API** directly (not Twilio).
+
+### Shopify
+
+1. In your Shopify admin, go to **Settings > Apps and sales channels >
+   Develop apps**, create a custom app, and configure Admin API scopes
+   covering orders, order edits/returns, and (if you want abandoned-cart
+   recovery) `read_marketing_events`-adjacent checkout access — in practice:
+   `read_orders`, `write_orders`, `read_returns`, `write_returns`. Install
+   the app and copy its **Admin API access token** into
+   `SHOPIFY_ACCESS_TOKEN`; set `SHOPIFY_STORE_NAME` to
+   `your-store.myshopify.com`.
+2. Set `SHOPIFY_API_VERSION` to Shopify's current quarterly API version
+   (check `shopify.dev/docs/api/admin-graphql` — the one in `.env.example`
+   may be out of date by the time you set this up).
+3. Go to **Settings > Notifications > Webhooks** and create a webhook for
+   the "Order creation" event, in JSON format, pointing at
+   `https://<your-host>/order_webhook`.
+4. Optional — for return-policy lookups: set `STOREFRONT_MCP_URL` to your
+   store's Storefront MCP endpoint (typically
+   `https://your-store.myshopify.com/api/mcp`; it needs no auth).
+
+> **Note on the GraphQL queries/mutations in `shopify_client.py`:** they're
+> written from Shopify's published Admin GraphQL docs, but this project was
+> built in a sandboxed environment with no network access to Shopify's API
+> or schema explorer, so the exact field/enum names for `orderCancel`,
+> `refundCreate`, `abandonedCheckouts`, and `returnRequest` are **not**
+> verified against a live store. Smoke-test each flow against a Shopify dev
+> store before relying on it in production — check current field names in
+> Shopify's GraphiQL app if a call fails.
+
+### Meta WhatsApp
 
 1. In [Meta for Developers](https://developers.facebook.com/apps), create an
    app with the WhatsApp product added, or use an existing WhatsApp Business
@@ -87,18 +126,18 @@ This uses Meta's WhatsApp Business **Cloud API** directly (not Twilio).
    to `https://<your-host>/whatsapp_webhook` and the verify token to the same
    `WHATSAPP_VERIFY_TOKEN` value — Meta will GET that URL once to confirm
    ownership. Then subscribe to the `messages` webhook field.
-4. In your Shopify admin, go to **Settings > Notifications > Webhooks** and
-   create a webhook for the "Order creation" event, in JSON format, pointing
-   at `https://<your-host>/order_webhook`.
 
 ## Project layout
 
-- `shopify_client.py` — Shopify API access (order lookups, recent orders,
-  phone matching, cancellations, refunds, abandoned checkouts).
+- `shopify_client.py` — Shopify GraphQL Admin API access (order lookups,
+  recent orders, phone matching, cancellations, refunds, abandoned
+  checkouts, returns) via raw `requests` calls, no SDK.
 - `whatsapp_client.py` — sends WhatsApp messages via Meta's WhatsApp Business
   Cloud API (Graph API).
 - `tools.py` — the tool schemas and dispatcher every agent shares.
-- `agent.py` — the tool-use loop (Claude decides which tools to call).
+- `agent.py` — the tool-use loop (Claude decides which tools to call),
+  including an optional connection to a remote MCP server (`mcp_server_url`)
+  for the support agent's Storefront MCP policy lookups.
 - `flask_app.py` — the two webhook endpoints.
 - `conversation_store.py` — per-phone-number chat history for the support
   agent's multi-turn flows.
@@ -107,15 +146,14 @@ This uses Meta's WhatsApp Business **Cloud API** directly (not Twilio).
 - `abandoned_cart.py` / `cart_state_store.py` — the cart-recovery poller and
   its small on-disk "already messaged" set.
 - `tests/` — unit tests covering the tools, agent loop, webhooks, monitor,
-  and cart recovery, with the Shopify/WhatsApp/Anthropic SDKs stubbed out.
+  cart recovery, and returns, with the Shopify GraphQL calls, WhatsApp/Meta
+  calls, and Anthropic client all stubbed out.
 
-## Possible enhancement: Shopify's Storefront Catalog MCP
+## Possible enhancement: Shopify's Storefront Catalog
 
-The cart-recovery message currently uses the item titles/prices captured on
-the checkout itself, which is enough for a basic nudge. Every Shopify store
-also exposes a free, unauthenticated **Storefront MCP** endpoint
-(`search_catalog`, `get_product`, `search_shop_policies_and_faqs`) that could
-enrich these messages with live data — current price/stock, a product image,
-or upsell suggestions — or let the support agent answer product/policy
-questions it currently can't. Not wired in yet since the checkout snapshot
-already covers the core flow.
+The cart-recovery message and returns policy lookup are the two places
+Storefront MCP data would help most; product *catalog* search
+(`search_catalog`, `get_product`) isn't wired in yet. It could enrich the
+cart-recovery message with live price/stock/images, or let the support
+agent answer general product questions ("do you have this in blue?") — not
+built since neither of the two flows implemented here strictly needs it.
