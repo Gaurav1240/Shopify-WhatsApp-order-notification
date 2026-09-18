@@ -368,12 +368,10 @@ def find_customer_id_by_phone(phone, days_back=90):
     return None
 
 
-def set_customer_metafield(customer_id, namespace, key, value, value_type="json"):
-    """Write (create or overwrite) a metafield on a Customer, visible on
-    their profile in Shopify admin under Metafields."""
+def _set_metafield(owner_resource, owner_id, namespace, key, value, value_type="json"):
     result = _graphql(
         """
-        mutation SetCustomerMetafield($metafields: [MetafieldsSetInput!]!) {
+        mutation SetMetafield($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) {
             metafields { id namespace key }
             userErrors { field message }
@@ -383,7 +381,7 @@ def set_customer_metafield(customer_id, namespace, key, value, value_type="json"
         {
             "metafields": [
                 {
-                    "ownerId": _to_gid("Customer", customer_id),
+                    "ownerId": _to_gid(owner_resource, owner_id),
                     "namespace": namespace,
                     "key": key,
                     "type": value_type,
@@ -395,9 +393,21 @@ def set_customer_metafield(customer_id, namespace, key, value, value_type="json"
 
     errors = result["userErrors"]
     if errors:
-        raise RuntimeError(f"Saving customer metafield failed: {errors}")
+        raise RuntimeError(f"Saving {owner_resource.lower()} metafield failed: {errors}")
 
     return {"metafield_id": result["metafields"][0]["id"], "namespace": namespace, "key": key}
+
+
+def set_customer_metafield(customer_id, namespace, key, value, value_type="json"):
+    """Write (create or overwrite) a metafield on a Customer, visible on
+    their profile in Shopify admin under Metafields."""
+    return _set_metafield("Customer", customer_id, namespace, key, value, value_type)
+
+
+def set_order_metafield(order_id, namespace, key, value, value_type="json"):
+    """Write (create or overwrite) a metafield on an Order, visible on the
+    order's page in Shopify admin under Metafields."""
+    return _set_metafield("Order", order_id, namespace, key, value, value_type)
 
 
 def save_customer_feedback(customer_id, feedback_type, feedback):

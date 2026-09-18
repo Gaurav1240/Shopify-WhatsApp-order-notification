@@ -59,6 +59,7 @@ def _isolated_state_files(tmp_path, monkeypatch):
     time, so patching the env var alone wouldn't affect already-imported
     modules — patch the module attribute directly instead.
     """
+    import appointment_store
     import cart_state_store
     import conversation_store
     import state_store
@@ -66,6 +67,7 @@ def _isolated_state_files(tmp_path, monkeypatch):
     monkeypatch.setattr(state_store, "STATE_PATH", str(tmp_path / "monitor_state.json"))
     monkeypatch.setattr(conversation_store, "HISTORY_PATH", str(tmp_path / "conversation_history.json"))
     monkeypatch.setattr(cart_state_store, "NOTIFIED_PATH", str(tmp_path / "abandoned_cart_notified.json"))
+    monkeypatch.setattr(appointment_store, "APPOINTMENTS_PATH", str(tmp_path / "appointments.json"))
 
 
 @pytest.fixture(autouse=True)

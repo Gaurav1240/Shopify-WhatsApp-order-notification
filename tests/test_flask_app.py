@@ -168,3 +168,13 @@ def test_whatsapp_webhook_mcp_server_url_none_by_default(monkeypatch):
 
 def test_support_tools_include_save_customer_feedback():
     assert "save_customer_feedback" in flask_app.SUPPORT_TOOLS
+
+
+def test_support_tools_include_appointment_booking():
+    for tool_name in (
+        "list_appointment_slots",
+        "book_appointment",
+        "cancel_appointment",
+        "find_appointments_by_phone",
+    ):
+        assert tool_name in flask_app.SUPPORT_TOOLS

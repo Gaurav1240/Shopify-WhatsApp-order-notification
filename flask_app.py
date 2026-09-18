@@ -40,6 +40,10 @@ SUPPORT_TOOLS = [
     "get_returnable_items",
     "request_return",
     "save_customer_feedback",
+    "list_appointment_slots",
+    "book_appointment",
+    "cancel_appointment",
+    "find_appointments_by_phone",
 ]
 
 NOTIFY_SYSTEM_PROMPT = (
@@ -80,7 +84,20 @@ SUPPORT_SYSTEM_PROMPT = (
     "If a customer replies with feedback about their delivery experience "
     "(a rating, or comments like 'arrived fast' or 'box was damaged'), "
     "thank them briefly and save it with save_customer_feedback "
-    "(feedback_type='delivery') so store staff can see it too."
+    "(feedback_type='delivery') so store staff can see it too.\n\n"
+    "You can also book appointments with list_appointment_slots, "
+    "book_appointment, find_appointments_by_phone, and cancel_appointment:\n"
+    "- 'return_pickup': once a return has been requested, offer to schedule "
+    "a courier pickup for the item.\n"
+    "- 'delivery': if a customer wants to choose when their order arrives, "
+    "look up the order first so you have its order_id to pass along.\n"
+    "- 'service': anything not tied to a specific order — a fitting, "
+    "consultation, repair, or similar in-store visit — ask what it's for "
+    "and pass that as service_name.\n"
+    "Always show 2-3 available slot times from list_appointment_slots and "
+    "let the customer pick one before calling book_appointment. If booking "
+    "fails because the slot was just taken, get a fresh list and offer "
+    "alternatives rather than giving up."
 )
 
 

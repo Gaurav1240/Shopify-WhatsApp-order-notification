@@ -2,6 +2,7 @@
 monitor_state.json
 conversation_history.json
 abandoned_cart_notified.json
+appointments.json
 __pycache__/
 *.pyc
 .pytest_cache/

@@ -19,7 +19,9 @@ and when. Three agents share the same tool set (`tools.py`):
   also captures customer feedback — delivery-experience comments, and why
   a customer is returning something — and writes it onto that customer's
   Shopify record as a metafield (see below), so store staff can see it in
-  Shopify admin without needing WhatsApp access.
+  Shopify admin without needing WhatsApp access. It can also book
+  appointments (return-pickup, delivery, or general store visits) — see
+  "Appointment booking" below.
 - **Monitoring agent** (`monitor.py`) — polls Shopify on an interval, notices
   order-status changes nobody told it about (shipped, cancelled, refunded,
   ...), and decides on its own whether the customer should hear about it.
@@ -49,6 +51,9 @@ Required environment variables (see `.env.example`):
   (from Meta's WhatsApp Business Platform — see below)
 - `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_MODEL`)
 - `STOREFRONT_MCP_URL` (optional — enables real return-policy lookups)
+- Appointment booking uses sensible defaults (`APPOINTMENT_HOURS_START/END`,
+  `APPOINTMENT_SLOT_MINUTES`, `APPOINTMENT_DAYS_AHEAD` — see below), nothing
+  required to set
 
 ## Running
 
@@ -151,12 +156,38 @@ scroll to **Metafields**, and add "WhatsApp Agent" definitions for these
 two keys (Settings > Custom data > Customers > Add definition) if you want
 them to render as labeled fields rather than raw JSON.
 
+## Appointment booking
+
+Shopify has no built-in scheduling concept, so `appointment_store.py` is its
+own small local calendar: a flat on-disk list of appointments plus a slot
+generator (business hours × workdays × `APPOINTMENT_SLOT_MINUTES`
+increments — defaults 9am-5pm, Mon-Fri, hourly, 7 days ahead) that filters
+out whatever's already booked. `appointments.py` books/cancels against that
+calendar and then mirrors the result onto Shopify — best-effort, logged not
+raised on failure — so the local calendar always stays the source of truth
+for "is this slot free."
+
+Three appointment types, each mirrored to a different place in admin:
+
+- `return_pickup` and `delivery` — tied to an order; written onto that
+  **order's** metafields (`whatsapp_agent.return_pickup_appointment` /
+  `whatsapp_agent.delivery_appointment`) since that's where staff fulfilling
+  it will look.
+- `service` — anything else (a fitting, consultation, repair...); written
+  onto the **customer's** metafields
+  (`whatsapp_agent.service_appointment`), same place as feedback.
+
+Known simplifications: slots are naive local time (no explicit timezone),
+and each appointment type has exactly one bookable slot per time (no
+per-type capacity — e.g. no "3 fitting rooms available at once"). Fine for
+a single small store; revisit if that stops being true.
+
 ## Project layout
 
 - `shopify_client.py` — Shopify GraphQL Admin API access (order lookups,
   recent orders, phone matching, cancellations, refunds, abandoned
-  checkouts, returns, customer feedback metafields) via raw `requests`
-  calls, no SDK.
+  checkouts, returns, order/customer metafields for feedback and
+  appointments) via raw `requests` calls, no SDK.
 - `whatsapp_client.py` — sends WhatsApp messages via Meta's WhatsApp Business
   Cloud API (Graph API).
 - `tools.py` — the tool schemas and dispatcher every agent shares.
@@ -170,9 +201,12 @@ them to render as labeled fields rather than raw JSON.
   its small on-disk state.
 - `abandoned_cart.py` / `cart_state_store.py` — the cart-recovery poller and
   its small on-disk "already messaged" set.
+- `appointments.py` / `appointment_store.py` — the appointment-booking
+  orchestration (Shopify write-through) and the local slot calendar it
+  books against.
 - `tests/` — unit tests covering the tools, agent loop, webhooks, monitor,
-  cart recovery, and returns, with the Shopify GraphQL calls, WhatsApp/Meta
-  calls, and Anthropic client all stubbed out.
+  cart recovery, returns, and appointments, with the Shopify GraphQL calls,
+  WhatsApp/Meta calls, and Anthropic client all stubbed out.
 
 ## Possible enhancement: Shopify's Storefront Catalog
 

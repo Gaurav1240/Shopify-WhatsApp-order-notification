@@ -1,5 +1,6 @@
 """Tool schemas (Anthropic tool-use format) and dispatcher shared by every agent."""
 
+import appointments
 import shopify_client
 import whatsapp_client
 
@@ -179,6 +180,73 @@ TOOL_SCHEMAS = [
             "required": ["phone", "feedback_type", "comment"],
         },
     },
+    {
+        "name": "list_appointment_slots",
+        "description": "List available appointment time slots for booking.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "appointment_type": {
+                    "type": "string",
+                    "enum": ["return_pickup", "delivery", "service"],
+                    "description": (
+                        "'return_pickup' for a courier to collect a return, 'delivery' to schedule "
+                        "an order's delivery, 'service' for an in-store visit (fitting, consultation, repair, etc.)."
+                    ),
+                },
+                "days_ahead": {
+                    "type": "integer",
+                    "description": "How many days ahead to search. Defaults to the store's configured window.",
+                },
+            },
+            "required": ["appointment_type"],
+        },
+    },
+    {
+        "name": "book_appointment",
+        "description": "Book an appointment slot (from list_appointment_slots) for a customer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "appointment_type": {"type": "string", "enum": ["return_pickup", "delivery", "service"]},
+                "slot_id": {"type": "string", "description": "A slot_id from list_appointment_slots."},
+                "phone": {"type": "string", "description": "Customer's phone number."},
+                "order_id": {
+                    "type": "string",
+                    "description": "Required for 'return_pickup' and 'delivery' — the related order.",
+                },
+                "service_name": {
+                    "type": "string",
+                    "description": "For 'service' appointments — what it's for, e.g. 'fitting', 'consultation', 'repair'.",
+                },
+                "notes": {"type": "string", "description": "Any extra detail the customer gave."},
+            },
+            "required": ["appointment_type", "slot_id", "phone"],
+        },
+    },
+    {
+        "name": "cancel_appointment",
+        "description": "Cancel a previously booked appointment.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "appointment_id": {
+                    "type": "string",
+                    "description": "The appointment's id, from book_appointment or find_appointments_by_phone.",
+                }
+            },
+            "required": ["appointment_id"],
+        },
+    },
+    {
+        "name": "find_appointments_by_phone",
+        "description": "List a customer's upcoming booked appointments by phone number.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"phone": {"type": "string", "description": "Phone number, with or without punctuation."}},
+            "required": ["phone"],
+        },
+    },
 ]
 
 def _save_customer_feedback(tool_input):
@@ -212,6 +280,17 @@ _HANDLERS = {
         i["order_id"], i["items"], reason=i.get("reason"), note=i.get("note")
     ),
     "save_customer_feedback": _save_customer_feedback,
+    "list_appointment_slots": lambda i: appointments.list_slots(i["appointment_type"], days_ahead=i.get("days_ahead")),
+    "book_appointment": lambda i: appointments.book(
+        i["appointment_type"],
+        i["slot_id"],
+        i["phone"],
+        order_id=i.get("order_id"),
+        service_name=i.get("service_name"),
+        notes=i.get("notes"),
+    ),
+    "cancel_appointment": lambda i: appointments.cancel(i["appointment_id"]),
+    "find_appointments_by_phone": lambda i: appointments.find_by_phone(i["phone"]),
 }
 
 

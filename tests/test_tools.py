@@ -179,3 +179,72 @@ def test_save_customer_feedback_handler_omits_optional_fields_when_absent(monkey
     tools._HANDLERS["save_customer_feedback"]({"phone": "+15551234567", "feedback_type": "return", "comment": "wrong size"})
 
     assert calls["feedback"] == {"comment": "wrong size"}
+
+
+def test_list_appointment_slots_handler_forwards_args(monkeypatch):
+    calls = {}
+
+    def fake_list(appointment_type, days_ahead=None):
+        calls.update({"appointment_type": appointment_type, "days_ahead": days_ahead})
+        return []
+
+    monkeypatch.setattr(tools.appointments, "list_slots", fake_list)
+
+    tools._HANDLERS["list_appointment_slots"]({"appointment_type": "service", "days_ahead": 3})
+
+    assert calls == {"appointment_type": "service", "days_ahead": 3}
+
+
+def test_book_appointment_handler_forwards_all_fields(monkeypatch):
+    calls = {}
+
+    def fake_book(appointment_type, slot_id, phone, order_id=None, service_name=None, notes=None):
+        calls.update(
+            {
+                "appointment_type": appointment_type,
+                "slot_id": slot_id,
+                "phone": phone,
+                "order_id": order_id,
+                "service_name": service_name,
+                "notes": notes,
+            }
+        )
+        return {"id": "abc"}
+
+    monkeypatch.setattr(tools.appointments, "book", fake_book)
+
+    result = tools._HANDLERS["book_appointment"](
+        {
+            "appointment_type": "delivery",
+            "slot_id": "2026-01-01T09:00:00",
+            "phone": "+15551234567",
+            "order_id": "1001",
+        }
+    )
+
+    assert calls == {
+        "appointment_type": "delivery",
+        "slot_id": "2026-01-01T09:00:00",
+        "phone": "+15551234567",
+        "order_id": "1001",
+        "service_name": None,
+        "notes": None,
+    }
+    assert result == {"id": "abc"}
+
+
+def test_cancel_appointment_handler_forwards_id(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(tools.appointments, "cancel", lambda appointment_id: calls.update({"id": appointment_id}))
+
+    tools._HANDLERS["cancel_appointment"]({"appointment_id": "abc"})
+
+    assert calls == {"id": "abc"}
+
+
+def test_find_appointments_by_phone_handler_forwards_phone(monkeypatch):
+    monkeypatch.setattr(tools.appointments, "find_by_phone", lambda phone: [{"phone": phone}])
+
+    result = tools._HANDLERS["find_appointments_by_phone"]({"phone": "+15551234567"})
+
+    assert result == [{"phone": "+15551234567"}]
