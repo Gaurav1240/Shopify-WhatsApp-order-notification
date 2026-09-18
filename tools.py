@@ -42,6 +42,28 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "list_abandoned_checkouts",
+        "description": "List checkouts customers started but never completed, with their cart items and a recovery link.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours_old": {
+                    "type": "number",
+                    "description": "Only checkouts at least this many hours old. Defaults to 1.",
+                }
+            },
+        },
+    },
+    {
+        "name": "find_abandoned_checkout_by_phone",
+        "description": "Find a customer's abandoned checkout(s) by phone number, e.g. to answer 'did I leave something in my cart?'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"phone": {"type": "string", "description": "Phone number, with or without punctuation."}},
+            "required": ["phone"],
+        },
+    },
+    {
         "name": "send_whatsapp_message",
         "description": "Send a WhatsApp message to a customer's phone number.",
         "input_schema": {
@@ -100,6 +122,8 @@ _HANDLERS = {
     "get_order_status": lambda i: shopify_client.get_order_status(i["order_id"]),
     "list_recent_orders": lambda i: shopify_client.list_recent_orders(days_back=i.get("days_back", 7)),
     "find_orders_by_phone": lambda i: shopify_client.find_orders_by_phone(i["phone"]),
+    "list_abandoned_checkouts": lambda i: shopify_client.list_abandoned_checkouts(hours_old=i.get("hours_old", 1)),
+    "find_abandoned_checkout_by_phone": lambda i: shopify_client.find_abandoned_checkout_by_phone(i["phone"]),
     "send_whatsapp_message": lambda i: whatsapp_client.send_whatsapp_message(i["to"], i["body"]),
     "cancel_order": lambda i: shopify_client.cancel_order(i["order_id"], reason=i.get("reason")),
     "refund_order": lambda i: shopify_client.refund_order(

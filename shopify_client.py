@@ -87,6 +87,49 @@ def find_orders_by_phone(phone, days_back=90):
     return [order for order in orders if _phones_match(order.get("phone"), phone)]
 
 
+def _checkout_to_dict(checkout):
+    customer = getattr(checkout, "customer", None)
+    phone = getattr(checkout, "phone", None)
+    if not phone and customer is not None:
+        phone = getattr(customer, "phone", None)
+
+    return {
+        "id": checkout.id,
+        "token": getattr(checkout, "token", None),
+        "email": getattr(checkout, "email", None),
+        "phone": phone,
+        "total_price": getattr(checkout, "total_price", None),
+        "abandoned_checkout_url": getattr(checkout, "abandoned_checkout_url", None),
+        "created_at": checkout.created_at,
+        "line_items": [
+            {"title": item.title, "quantity": item.quantity, "price": getattr(item, "price", None)}
+            for item in getattr(checkout, "line_items", [])
+        ],
+    }
+
+
+def list_abandoned_checkouts(hours_old=1, lookback_hours=48, limit=100):
+    """Checkouts started but never completed, old enough that the customer
+
+    has plausibly given up rather than still being mid-purchase.
+    `hours_old` sets that minimum age; `lookback_hours` bounds how far back
+    to search so the query stays cheap on a busy store.
+    """
+    _configure()
+    now = datetime.now()
+    created_at_max = (now - timedelta(hours=hours_old)).strftime("%Y-%m-%dT%H:%M:%S")
+    created_at_min = (now - timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M:%S")
+    checkouts = shopify.Checkout.find(created_at_min=created_at_min, created_at_max=created_at_max, limit=limit)
+    return [_checkout_to_dict(c) for c in checkouts if getattr(c, "completed_at", None) is None]
+
+
+def find_abandoned_checkout_by_phone(phone, lookback_hours=48):
+    if not _normalize_phone(phone):
+        return []
+    checkouts = list_abandoned_checkouts(hours_old=0, lookback_hours=lookback_hours, limit=250)
+    return [c for c in checkouts if _phones_match(c.get("phone"), phone)]
+
+
 def cancel_order(order_id, reason=None):
     """Cancel an order. Irreversible — callers must have explicit customer confirmation."""
     _configure()

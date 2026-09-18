@@ -15,6 +15,13 @@ and when. Three agents share the same tool set (`tools.py`):
 - **Monitoring agent** (`monitor.py`) — polls Shopify on an interval, notices
   order-status changes nobody told it about (shipped, cancelled, refunded,
   ...), and decides on its own whether the customer should hear about it.
+- **Cart-recovery agent** (`abandoned_cart.py`) — polls Shopify's abandoned-
+  checkouts list for carts that were started but never completed. For each
+  one it hasn't already messaged, it drafts and sends a friendly WhatsApp
+  nudge naming what's in the cart and including the checkout's recovery
+  link. `cart_state_store.py` remembers which checkouts were already
+  messaged so nobody gets nudged twice. The support agent can also look up
+  a customer's abandoned checkout by phone if they ask about it.
 
 ## Setup
 
@@ -38,10 +45,12 @@ Start the webhook server:
 python flask_app.py
 ```
 
-Optionally start the autonomous monitor in a separate process:
+Optionally start the autonomous monitor and/or the cart-recovery poller in
+separate processes:
 
 ```
 python monitor.py
+python abandoned_cart.py
 ```
 
 ## Testing
@@ -85,7 +94,7 @@ This uses Meta's WhatsApp Business **Cloud API** directly (not Twilio).
 ## Project layout
 
 - `shopify_client.py` — Shopify API access (order lookups, recent orders,
-  phone matching, cancellations, refunds).
+  phone matching, cancellations, refunds, abandoned checkouts).
 - `whatsapp_client.py` — sends WhatsApp messages via Meta's WhatsApp Business
   Cloud API (Graph API).
 - `tools.py` — the tool schemas and dispatcher every agent shares.
@@ -95,5 +104,18 @@ This uses Meta's WhatsApp Business **Cloud API** directly (not Twilio).
   agent's multi-turn flows.
 - `monitor.py` / `state_store.py` — the autonomous status-change monitor and
   its small on-disk state.
-- `tests/` — unit tests covering the tools, agent loop, webhooks, and
-  monitor, with the Shopify/WhatsApp/Anthropic SDKs stubbed out.
+- `abandoned_cart.py` / `cart_state_store.py` — the cart-recovery poller and
+  its small on-disk "already messaged" set.
+- `tests/` — unit tests covering the tools, agent loop, webhooks, monitor,
+  and cart recovery, with the Shopify/WhatsApp/Anthropic SDKs stubbed out.
+
+## Possible enhancement: Shopify's Storefront Catalog MCP
+
+The cart-recovery message currently uses the item titles/prices captured on
+the checkout itself, which is enough for a basic nudge. Every Shopify store
+also exposes a free, unauthenticated **Storefront MCP** endpoint
+(`search_catalog`, `get_product`, `search_shop_policies_and_faqs`) that could
+enrich these messages with live data — current price/stock, a product image,
+or upsell suggestions — or let the support agent answer product/policy
+questions it currently can't. Not wired in yet since the checkout snapshot
+already covers the core flow.

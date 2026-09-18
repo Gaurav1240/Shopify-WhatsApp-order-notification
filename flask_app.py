@@ -31,6 +31,7 @@ SUPPORT_TOOLS = [
     "find_orders_by_phone",
     "cancel_order",
     "refund_order",
+    "find_abandoned_checkout_by_phone",
 ]
 
 NOTIFY_SYSTEM_PROMPT = (
@@ -53,7 +54,10 @@ SUPPORT_SYSTEM_PROMPT = (
     "same turn a customer first asks for one: look up the order, summarize "
     "it, and explicitly ask them to confirm. Only call cancel_order or "
     "refund_order once the customer has clearly confirmed in a later message "
-    "in this conversation (e.g. they say 'yes' after you asked)."
+    "in this conversation (e.g. they say 'yes' after you asked).\n\n"
+    "If a customer asks about something they were trying to buy or a cart "
+    "they didn't finish, use find_abandoned_checkout_by_phone to check for "
+    "an incomplete checkout and share the recovery link if you find one."
 )
 
 

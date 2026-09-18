@@ -1,6 +1,7 @@
 .env
 monitor_state.json
 conversation_history.json
+abandoned_cart_notified.json
 __pycache__/
 *.pyc
 .pytest_cache/

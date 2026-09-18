@@ -76,3 +76,31 @@ def test_refund_order_handler_forwards_amount_and_reason(monkeypatch):
     tools._HANDLERS["refund_order"]({"order_id": "1001", "amount": "10.00", "reason": "damaged"})
 
     assert calls == {"order_id": "1001", "amount": "10.00", "reason": "damaged"}
+
+
+def test_list_abandoned_checkouts_handler_defaults_hours_old(monkeypatch):
+    calls = {}
+
+    def fake_list(hours_old=None):
+        calls["hours_old"] = hours_old
+        return []
+
+    monkeypatch.setattr(tools.shopify_client, "list_abandoned_checkouts", fake_list)
+
+    tools._HANDLERS["list_abandoned_checkouts"]({})
+
+    assert calls == {"hours_old": 1}
+
+
+def test_find_abandoned_checkout_by_phone_handler_forwards_phone(monkeypatch):
+    calls = {}
+
+    def fake_find(phone):
+        calls["phone"] = phone
+        return []
+
+    monkeypatch.setattr(tools.shopify_client, "find_abandoned_checkout_by_phone", fake_find)
+
+    tools._HANDLERS["find_abandoned_checkout_by_phone"]({"phone": "+15551234567"})
+
+    assert calls == {"phone": "+15551234567"}

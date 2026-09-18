@@ -24,6 +24,32 @@ class FakeTransaction:
         self.status = status
 
 
+class FakeCheckout:
+    def __init__(
+        self,
+        id=5001,
+        token="abc123",
+        email="a@example.com",
+        total_price="30.00",
+        abandoned_checkout_url="https://store.myshopify.com/carts/abc123",
+        created_at="2026-01-01T00:00:00Z",
+        completed_at=None,
+        line_items=None,
+        phone=None,
+        customer=None,
+    ):
+        self.id = id
+        self.token = token
+        self.email = email
+        self.total_price = total_price
+        self.abandoned_checkout_url = abandoned_checkout_url
+        self.created_at = created_at
+        self.completed_at = completed_at
+        self.line_items = line_items or []
+        self.phone = phone
+        self.customer = customer
+
+
 class FakeOrder:
     def __init__(
         self,
@@ -216,3 +242,53 @@ def test_refund_order_raises_when_save_fails(monkeypatch):
         assert False, "expected RuntimeError"
     except RuntimeError:
         pass
+
+
+def test_list_abandoned_checkouts_excludes_completed(monkeypatch):
+    open_checkout = FakeCheckout(id=1, completed_at=None)
+    completed_checkout = FakeCheckout(id=2, completed_at="2026-01-01T01:00:00Z")
+    monkeypatch.setattr(
+        shopify_client.shopify.Checkout, "find", staticmethod(lambda *a, **k: [open_checkout, completed_checkout])
+    )
+
+    results = shopify_client.list_abandoned_checkouts()
+
+    assert [r["id"] for r in results] == [1]
+
+
+def test_list_abandoned_checkouts_extracts_phone_and_line_items(monkeypatch):
+    checkout = FakeCheckout(
+        phone="+1 (555) 123-4567",
+        line_items=[FakeLineItem("Mug", 2)],
+        abandoned_checkout_url="https://store.myshopify.com/carts/abc123",
+    )
+    monkeypatch.setattr(shopify_client.shopify.Checkout, "find", staticmethod(lambda *a, **k: [checkout]))
+
+    results = shopify_client.list_abandoned_checkouts()
+
+    assert results[0]["phone"] == "+1 (555) 123-4567"
+    assert results[0]["abandoned_checkout_url"] == "https://store.myshopify.com/carts/abc123"
+    assert results[0]["line_items"][0]["title"] == "Mug"
+
+
+def test_list_abandoned_checkouts_falls_back_to_customer_phone(monkeypatch):
+    checkout = FakeCheckout(phone=None, customer=FakeCustomer("5551234567"))
+    monkeypatch.setattr(shopify_client.shopify.Checkout, "find", staticmethod(lambda *a, **k: [checkout]))
+
+    results = shopify_client.list_abandoned_checkouts()
+
+    assert results[0]["phone"] == "5551234567"
+
+
+def test_find_abandoned_checkout_by_phone_matches(monkeypatch):
+    checkouts = [
+        {"id": 1, "phone": "555-123-4567"},
+        {"id": 2, "phone": "555-000-0000"},
+    ]
+    monkeypatch.setattr(shopify_client, "list_abandoned_checkouts", lambda **k: checkouts)
+
+    assert shopify_client.find_abandoned_checkout_by_phone("+15551234567") == [checkouts[0]]
+
+
+def test_find_abandoned_checkout_by_phone_empty_phone_returns_nothing():
+    assert shopify_client.find_abandoned_checkout_by_phone("") == []
