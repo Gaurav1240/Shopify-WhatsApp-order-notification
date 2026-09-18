@@ -1,84 +1,158 @@
+"""Webhook entry points for the Shopify <-> WhatsApp agent.
+
+- /order_webhook: Shopify calls this on order creation. An agent drafts and
+  sends the WhatsApp confirmation itself (see NOTIFY_SYSTEM_PROMPT).
+- /whatsapp_webhook: Meta's WhatsApp Business Cloud API calls this (GET to
+  verify the webhook, POST to deliver inbound messages). An agent looks up
+  the sender's order(s) and replies conversationally; since Meta has no
+  reply-in-the-webhook-response mechanism like Twilio's TwiML, the reply is
+  sent back out explicitly via send_whatsapp_message.
+"""
+
 import json
-import shopify
+import os
+
+from dotenv import load_dotenv
 from flask import Flask, request
-from twilio.rest import Client
-from datetime import datetime, timedelta
-from client import get_orders, process_order
 
+from agent import run_agent
+from conversation_store import append_turn, get_history
+from whatsapp_client import send_whatsapp_message
 
-shopify_config = {
-    'API_KEY': 'your_api_key',
-    'API_PASSWORD': 'your_api_password',
-    'STORE_NAME': 'your_store_name.myshopify.com',
-}
-shopify.Session.setup(api_key=shopify_config['API_KEY'], 
-                      secret=shopify_config['API_PASSWORD'])
-shopify.ShopifyResource.set_site(f"https://{shopify_config['STORE_NAME']}")
-
+load_dotenv()
 
 app = Flask(__name__)
 
-@app.route('/order_webhook', methods=['POST'])
+# Optional: a Shopify store's Storefront MCP endpoint (product catalog,
+# policies/FAQs). When set, the support agent can consult the store's real
+# return policy instead of guessing. See README for the expected URL shape.
+STOREFRONT_MCP_URL = os.environ.get("STOREFRONT_MCP_URL")
+
+NOTIFY_TOOLS = ["get_order", "get_order_status", "send_whatsapp_message"]
+SUPPORT_TOOLS = [
+    "get_order",
+    "get_order_status",
+    "list_recent_orders",
+    "find_orders_by_phone",
+    "cancel_order",
+    "refund_order",
+    "find_abandoned_checkout_by_phone",
+    "get_returnable_items",
+    "request_return",
+    "save_customer_feedback",
+    "list_appointment_slots",
+    "book_appointment",
+    "cancel_appointment",
+    "find_appointments_by_phone",
+]
+
+NOTIFY_SYSTEM_PROMPT = (
+    "You are the order-notification agent for a Shopify store. You are given "
+    "the details of an order that was just created. Write a short, warm "
+    "WhatsApp message to the customer confirming their order (mention the "
+    "order name/number and total price), and send it with the "
+    "send_whatsapp_message tool to the customer's phone number. If the phone "
+    "number is missing, do not send anything and just say so."
+)
+
+SUPPORT_SYSTEM_PROMPT = (
+    "You are a friendly, concise customer-support agent for a Shopify store, "
+    "replying to a customer over WhatsApp. Use the available tools to look up "
+    "their orders (match them by their phone number) and answer questions "
+    "about order status, contents, or totals. Never invent order details you "
+    "haven't looked up. Keep replies short enough for a chat message.\n\n"
+    "You can also cancel an order or issue a refund with the cancel_order / "
+    "refund_order tools. These are irreversible, so never call them on the "
+    "same turn a customer first asks for one: look up the order, summarize "
+    "it, and explicitly ask them to confirm. Only call cancel_order or "
+    "refund_order once the customer has clearly confirmed in a later message "
+    "in this conversation (e.g. they say 'yes' after you asked).\n\n"
+    "If a customer asks about something they were trying to buy or a cart "
+    "they didn't finish, use find_abandoned_checkout_by_phone to check for "
+    "an incomplete checkout and share the recovery link if you find one.\n\n"
+    "If a customer wants to return or exchange an item: first, if you have "
+    "storefront tools available, check the store's actual return policy "
+    "(window, excluded items, who pays shipping) rather than guessing. Then "
+    "use get_returnable_items to see what's eligible on their order, "
+    "summarize it, and ask which item(s) and why before doing anything. "
+    "Only call request_return once the customer has clearly confirmed in a "
+    "later message in this conversation. Always ask why they're returning "
+    "it if they haven't already said, and once you have that reason, save "
+    "it with save_customer_feedback (feedback_type='return') in addition to "
+    "calling request_return — the store can't see a WhatsApp conversation, "
+    "so this is what makes their reason visible to staff.\n\n"
+    "If a customer replies with feedback about their delivery experience "
+    "(a rating, or comments like 'arrived fast' or 'box was damaged'), "
+    "thank them briefly and save it with save_customer_feedback "
+    "(feedback_type='delivery') so store staff can see it too.\n\n"
+    "You can also book appointments with list_appointment_slots, "
+    "book_appointment, find_appointments_by_phone, and cancel_appointment:\n"
+    "- 'return_pickup': once a return has been requested, offer to schedule "
+    "a courier pickup for the item.\n"
+    "- 'delivery': if a customer wants to choose when their order arrives, "
+    "look up the order first so you have its order_id to pass along.\n"
+    "- 'service': anything not tied to a specific order — a fitting, "
+    "consultation, repair, or similar in-store visit — ask what it's for "
+    "and pass that as service_name.\n"
+    "Always show 2-3 available slot times from list_appointment_slots and "
+    "let the customer pick one before calling book_appointment. If booking "
+    "fails because the slot was just taken, get a fresh list and offer "
+    "alternatives rather than giving up."
+)
+
+
+@app.route("/order_webhook", methods=["POST"])
 def order_webhook():
-    # Extract the order data from the webhook payload
-    data = request.data.decode('utf-8')
-    payload = json.loads(data)
-    order_data = payload['data']
-    
-    # Extract the relevant order data and process it
-    order_dict = {
-        'id': order_data['id'],
-        'name': order_data['name'],
-        'email': order_data['email'],
-        'total_price': order_data['total_price'],
-        'created_at': order_data['created_at'],
-        # Add any additional fields you want to include here
-    }
-    process_order(order_dict)
-    
-    return 'Webhook received', 200
-  
- 
-# Define a function to retrieve order data
-def get_orders(days_back=7):
-    # Calculate the start and end dates for the order query
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-    
-    # Build the order query and retrieve the orders
-    orders = shopify.Order.find(created_at_min=start_date, created_at_max=end_date, limit=100)
-    
-    # Extract the relevant order data and return it as a list of dictionaries
-    order_data = []
-    for order in orders:
-        order_dict = {
-            'id': order.id,
-            'name': order.name,
-            'email': order.email,
-            'total_price': order.total_price,
-            'created_at': order.created_at,
-            # Add any additional fields you want to include here
-        }
-        order_data.append(order_dict)
-    return order_data
+    payload = json.loads(request.data.decode("utf-8"))
+    order_data = payload.get("data", payload)
 
-# Example usage: retrieve all orders created in the past 7 days
-orders = get_orders(days_back=7)
-print(orders)
-
-def process_order(order_dict):
-    # Send the order data as a WhatsApp message
-    account_sid = 'your_account_sid'
-    auth_token = 'your_auth_token'
-    client = Client(account_sid, auth_token)
-
-    message = client.messages.create(
-        from_='whatsapp:+14155238886',
-        body=f"New order received!\nOrder ID: {order_dict['id']}\nCustomer name: {order_dict['name']}\nTotal price: {order_dict['total_price']}",
-        to='whatsapp:+1234567890'
+    run_agent(
+        system_prompt=NOTIFY_SYSTEM_PROMPT,
+        user_message=f"New order created:\n{json.dumps(order_data, default=str)}",
+        tool_names=NOTIFY_TOOLS,
     )
+    return "Webhook received", 200
 
-    print(f"Sent message to {message.to}: {message.body}")
 
-if __name__ == '__main__':
+@app.route("/whatsapp_webhook", methods=["GET"])
+def whatsapp_webhook_verify():
+    """Meta's one-time webhook verification handshake."""
+    if (
+        request.args.get("hub.mode") == "subscribe"
+        and request.args.get("hub.verify_token") == os.environ.get("WHATSAPP_VERIFY_TOKEN")
+    ):
+        return request.args.get("hub.challenge", ""), 200
+    return "Forbidden", 403
+
+
+@app.route("/whatsapp_webhook", methods=["POST"])
+def whatsapp_webhook():
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        value = payload["entry"][0]["changes"][0]["value"]
+        message = value["messages"][0]
+    except (KeyError, IndexError):
+        # Delivery/read status callbacks and other non-message events land
+        # here too; there's nothing for the agent to do with those.
+        return "EVENT_RECEIVED", 200
+
+    from_number = message["from"]
+    body = message.get("text", {}).get("body", "")
+
+    history = get_history(from_number)
+    reply_text = run_agent(
+        system_prompt=SUPPORT_SYSTEM_PROMPT,
+        user_message=f"Message from {from_number}: {body}",
+        tool_names=SUPPORT_TOOLS,
+        history=history,
+        mcp_server_url=STOREFRONT_MCP_URL,
+    )
+    append_turn(from_number, body, reply_text)
+    send_whatsapp_message(from_number, reply_text)
+
+    return "EVENT_RECEIVED", 200
+
+
+if __name__ == "__main__":
     app.run(debug=True)
