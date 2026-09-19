@@ -38,6 +38,9 @@ and when. Three agents share the same tool set (`tools.py`):
   also offer a personalized discount code — see "Abandoned-cart discount
   policy" below.
 
+All of the above tools are also reachable directly by an external system —
+see "MCP server (plugging into another agentic-commerce system)" below.
+
 ## Setup
 
 ```
@@ -71,6 +74,13 @@ separate processes:
 ```
 python monitor.py
 python abandoned_cart.py
+```
+
+Optionally start the MCP server, to let another system call these tools
+directly (see "MCP server" below):
+
+```
+python mcp_server.py
 ```
 
 ## Testing
@@ -209,6 +219,43 @@ eligible for a discount (`create_discount_code` returns
 `{"eligible": false}`), it's instructed to just send the plain recovery
 message without mentioning one.
 
+## MCP server (plugging into another agentic-commerce system)
+
+`mcp_server.py` exposes every tool in `tools.py` — order lookups, cancel,
+refund, returns, discount codes, appointments — to an external MCP-compatible
+client over **Streamable HTTP**, so another agent/system can call this
+store's commerce actions directly instead of going through WhatsApp. It's a
+thin wrapper: `tools.TOOL_SCHEMAS` becomes the MCP tool list, and every call
+is dispatched through the same `tools.run_tool` the WhatsApp agents use.
+
+**Setup:**
+
+1. Set `MCP_BEARER_TOKEN` in `.env` to a long random secret (e.g. `openssl
+   rand -hex 32`) — every request must send `Authorization: Bearer
+   <that value>`. Without it set, the server refuses all requests (503)
+   rather than opening up unauthenticated; this also fails closed if the app
+   is mounted directly (`uvicorn mcp_server:app`) instead of run via
+   `python mcp_server.py`.
+2. `python mcp_server.py` — serves MCP at `http://<MCP_HOST>:<MCP_PORT>/mcp`
+   (defaults `0.0.0.0:8000`).
+3. Point the other system's MCP client at that URL with the bearer token.
+
+**Guardrail note, read before connecting anything:** inside this project,
+`cancel_order`/`refund_order`/`request_return` are only ever called by the
+WhatsApp support agent after its system prompt has told it to wait for the
+customer's explicit confirmation — that's an instruction to one specific
+Claude agent, not something this server enforces. Any system holding
+`MCP_BEARER_TOKEN` can call any tool here, including those three, with no
+confirmation step of its own. Before plugging something in, confirm *it*
+enforces its own confirmation gate for irreversible actions — this server
+won't.
+
+Built and smoke-tested with a live HTTP round trip (`initialize`,
+`tools/list`, `tools/call`) against `mcp==2.2.0` / `uvicorn==0.53.0`, pinned
+exactly in `requirements.txt` since the Streamable HTTP API is young enough
+to plausibly change between versions — if you bump either, re-run that round
+trip before trusting it.
+
 ## Project layout
 
 - `shopify_client.py` — Shopify GraphQL Admin API access (order lookups,
@@ -235,6 +282,8 @@ message without mentioning one.
 - `appointments.py` / `appointment_store.py` — the appointment-booking
   orchestration (Shopify write-through) and the local slot calendar it
   books against.
+- `mcp_server.py` — exposes `tools.py`'s tools to an external system over
+  MCP (Streamable HTTP), bearer-token gated.
 - `tests/` — unit tests covering the tools, agent loop, webhooks, monitor,
   cart recovery, returns, and appointments, with the Shopify GraphQL calls,
   WhatsApp/Meta calls, and Anthropic client all stubbed out.
