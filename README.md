@@ -34,7 +34,9 @@ and when. Three agents share the same tool set (`tools.py`):
   nudge naming what's in the cart and including the checkout's recovery
   link. `cart_state_store.py` remembers which checkouts were already
   messaged so nobody gets nudged twice. The support agent can also look up
-  a customer's abandoned checkout by phone if they ask about it.
+  a customer's abandoned checkout by phone if they ask about it. It can
+  also offer a personalized discount code — see "Abandoned-cart discount
+  policy" below.
 
 ## Setup
 
@@ -92,9 +94,10 @@ Meta's WhatsApp Business **Cloud API** directly (not Twilio).
 
 1. In your Shopify admin, go to **Settings > Apps and sales channels >
    Develop apps**, create a custom app, and configure Admin API scopes:
-   `read_orders`, `write_orders`, `read_returns`, `write_returns`, and
-   `write_customers` (needed to save feedback as a customer metafield).
-   Install the app and copy its **Admin API access token** into
+   `read_orders`, `write_orders`, `read_returns`, `write_returns`,
+   `write_customers` (needed to save feedback as a customer metafield), and
+   `write_discounts` (needed for abandoned-cart discount codes). Install
+   the app and copy its **Admin API access token** into
    `SHOPIFY_ACCESS_TOKEN`; set `SHOPIFY_STORE_NAME` to
    `your-store.myshopify.com`.
 2. Set `SHOPIFY_API_VERSION` to Shopify's current quarterly API version
@@ -182,6 +185,30 @@ and each appointment type has exactly one bookable slot per time (no
 per-type capacity — e.g. no "3 fitting rooms available at once"). Fine for
 a single small store; revisit if that stops being true.
 
+## Abandoned-cart discount policy
+
+The cart-recovery agent can offer a one-time discount code alongside its
+recovery message, but it never picks the discount amount itself — it calls
+`create_discount_code`, which computes a percentage from `discount_policy.json`
+(cart-value tiers, a bonus for a long-abandoned cart, and a hard
+`max_discount_percent` ceiling) and enforces a per-customer cap
+(`max_codes_per_customer` within `max_codes_window_days`) so a customer can't
+farm discounts by repeatedly abandoning their cart. Edit
+`discount_policy.json` directly to tune it for your store — no code change
+needed. The same checkout is never issued two different codes: if one is
+still valid (`code_expiry_hours`), it's reused rather than a new one minted.
+Issued codes are logged to `discount_codes.json` for audit and to enforce the
+per-customer cap; `discountCodeBasicCreate` (Shopify's discount-code
+mutation) carries the same not-verified-against-a-live-schema caveat as the
+rest of `shopify_client.py`.
+
+Known simplification: eligibility/amount is decided per-message from the
+current cart value and abandonment age — there's no cross-checkout customer
+history beyond the rate limit. If the agent decides the customer isn't
+eligible for a discount (`create_discount_code` returns
+`{"eligible": false}`), it's instructed to just send the plain recovery
+message without mentioning one.
+
 ## Project layout
 
 - `shopify_client.py` — Shopify GraphQL Admin API access (order lookups,
@@ -201,6 +228,10 @@ a single small store; revisit if that stops being true.
   its small on-disk state.
 - `abandoned_cart.py` / `cart_state_store.py` — the cart-recovery poller and
   its small on-disk "already messaged" set.
+- `discounts.py` / `discount_policy.py` / `discount_store.py` — computes and
+  issues abandoned-cart discount codes within a merchant-configured policy
+  (`discount_policy.json`), tracking issued codes for reuse and rate-limiting
+  (`discount_codes.json`).
 - `appointments.py` / `appointment_store.py` — the appointment-booking
   orchestration (Shopify write-through) and the local slot calendar it
   books against.

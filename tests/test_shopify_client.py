@@ -484,6 +484,68 @@ def test_set_customer_metafield_raises_on_user_errors(monkeypatch):
         pass
 
 
+def test_create_discount_code_builds_input_and_returns_confirmation(monkeypatch):
+    created = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        created.update(json["variables"]["basicCodeDiscount"])
+        return FakeHTTPResponse(
+            {
+                "data": {
+                    "discountCodeBasicCreate": {
+                        "codeDiscountNode": {"id": "gid://shopify/DiscountCodeNode/1"},
+                        "userErrors": [],
+                    }
+                }
+            }
+        )
+
+    monkeypatch.setattr(shopify_client, "requests", type("R", (), {"post": staticmethod(fake_post)}))
+
+    result = shopify_client.create_discount_code("SAVE10-ABCDEF", 10, "2026-02-01T00:00:00")
+
+    assert created["code"] == "SAVE10-ABCDEF"
+    assert created["endsAt"] == "2026-02-01T00:00:00"
+    assert created["customerGets"]["value"]["percentage"] == 0.10
+    assert result == {
+        "code": "SAVE10-ABCDEF",
+        "percentage": 10,
+        "expires_at": "2026-02-01T00:00:00",
+        "discount_id": "gid://shopify/DiscountCodeNode/1",
+    }
+
+
+def test_create_discount_code_raises_on_user_errors(monkeypatch):
+    monkeypatch.setattr(
+        shopify_client,
+        "requests",
+        type(
+            "R",
+            (),
+            {
+                "post": staticmethod(
+                    _post_returning(
+                        {
+                            "data": {
+                                "discountCodeBasicCreate": {
+                                    "codeDiscountNode": None,
+                                    "userErrors": [{"field": "code", "message": "already exists"}],
+                                }
+                            }
+                        }
+                    )
+                )
+            },
+        ),
+    )
+
+    try:
+        shopify_client.create_discount_code("SAVE10-ABCDEF", 10, "2026-02-01T00:00:00")
+        assert False, "expected RuntimeError"
+    except RuntimeError:
+        pass
+
+
 def test_save_customer_feedback_writes_json_with_timestamp(monkeypatch):
     captured = {}
 

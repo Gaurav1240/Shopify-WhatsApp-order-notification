@@ -1,0 +1,13 @@
+{
+  "max_discount_percent": 20,
+  "tiers": [
+    {"min_cart_value": 0, "discount_percent": 5},
+    {"min_cart_value": 50, "discount_percent": 10},
+    {"min_cart_value": 150, "discount_percent": 15}
+  ],
+  "long_abandoned_hours": 48,
+  "long_abandoned_bonus_percent": 5,
+  "code_expiry_hours": 72,
+  "max_codes_per_customer": 2,
+  "max_codes_window_days": 30
+}

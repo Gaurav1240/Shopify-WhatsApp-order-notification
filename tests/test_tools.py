@@ -248,3 +248,47 @@ def test_find_appointments_by_phone_handler_forwards_phone(monkeypatch):
     result = tools._HANDLERS["find_appointments_by_phone"]({"phone": "+15551234567"})
 
     assert result == [{"phone": "+15551234567"}]
+
+
+def test_create_discount_code_handler_forwards_all_fields(monkeypatch):
+    calls = {}
+
+    def fake_get_or_create(checkout_id, phone, cart_value, hours_since_abandoned=0):
+        calls.update(
+            {
+                "checkout_id": checkout_id,
+                "phone": phone,
+                "cart_value": cart_value,
+                "hours_since_abandoned": hours_since_abandoned,
+            }
+        )
+        return {"code": "SAVE10-ABCDEF"}
+
+    monkeypatch.setattr(tools.discounts, "get_or_create", fake_get_or_create)
+
+    result = tools._HANDLERS["create_discount_code"](
+        {"checkout_id": "5001", "phone": "+15551234567", "cart_value": "40.00", "hours_since_abandoned": 50}
+    )
+
+    assert calls == {
+        "checkout_id": "5001",
+        "phone": "+15551234567",
+        "cart_value": 40.0,
+        "hours_since_abandoned": 50.0,
+    }
+    assert result == {"code": "SAVE10-ABCDEF"}
+
+
+def test_create_discount_code_handler_defaults_hours_since_abandoned(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(
+        tools.discounts,
+        "get_or_create",
+        lambda checkout_id, phone, cart_value, hours_since_abandoned=0: calls.update(
+            {"hours_since_abandoned": hours_since_abandoned}
+        ),
+    )
+
+    tools._HANDLERS["create_discount_code"]({"checkout_id": "5001", "phone": "+15551234567", "cart_value": "40.00"})
+
+    assert calls == {"hours_since_abandoned": 0.0}

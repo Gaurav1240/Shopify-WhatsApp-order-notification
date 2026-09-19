@@ -1,6 +1,7 @@
 """Tool schemas (Anthropic tool-use format) and dispatcher shared by every agent."""
 
 import appointments
+import discounts
 import shopify_client
 import whatsapp_client
 
@@ -247,6 +248,28 @@ TOOL_SCHEMAS = [
             "required": ["phone"],
         },
     },
+    {
+        "name": "create_discount_code",
+        "description": (
+            "Get a personalized discount code for a customer's abandoned cart, within the "
+            "store's discount policy — reuses an existing code if one was already issued for "
+            "this checkout. May return {\"eligible\": false} if the customer has already "
+            "reached the policy's limit; in that case, don't mention a discount at all."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "checkout_id": {"type": "string", "description": "The abandoned checkout's id."},
+                "phone": {"type": "string", "description": "Customer's phone number."},
+                "cart_value": {"type": "string", "description": "The cart's total price, e.g. '45.00'."},
+                "hours_since_abandoned": {
+                    "type": "number",
+                    "description": "How many hours since the cart was abandoned. Defaults to 0.",
+                },
+            },
+            "required": ["checkout_id", "phone", "cart_value"],
+        },
+    },
 ]
 
 def _save_customer_feedback(tool_input):
@@ -261,6 +284,15 @@ def _save_customer_feedback(tool_input):
         feedback["order_id"] = tool_input["order_id"]
 
     return shopify_client.save_customer_feedback(customer_id, tool_input["feedback_type"], feedback)
+
+
+def _create_discount_code(tool_input):
+    return discounts.get_or_create(
+        checkout_id=tool_input["checkout_id"],
+        phone=tool_input["phone"],
+        cart_value=float(tool_input["cart_value"]),
+        hours_since_abandoned=float(tool_input.get("hours_since_abandoned", 0)),
+    )
 
 
 _HANDLERS = {
@@ -291,6 +323,7 @@ _HANDLERS = {
     ),
     "cancel_appointment": lambda i: appointments.cancel(i["appointment_id"]),
     "find_appointments_by_phone": lambda i: appointments.find_by_phone(i["phone"]),
+    "create_discount_code": _create_discount_code,
 }
 
 

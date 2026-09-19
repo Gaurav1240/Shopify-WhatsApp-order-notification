@@ -2,10 +2,11 @@
 
 Talks directly to /admin/api/<version>/graphql.json with a single Admin API
 access token — no SDK, no REST. NOTE: the exact field/enum names below for
-orderCancel, refundCreate, abandonedCheckouts and returnRequest are written
-from Shopify's published GraphQL docs, not verified against a live schema
-(this environment has no network access to shopify.dev or a real store) —
-smoke-test against a dev store before relying on this in production.
+orderCancel, refundCreate, abandonedCheckouts, returnRequest and
+discountCodeBasicCreate are written from Shopify's published GraphQL docs,
+not verified against a live schema (this environment has no network access
+to shopify.dev or a real store) — smoke-test against a dev store before
+relying on this in production.
 """
 
 import json
@@ -408,6 +409,50 @@ def set_order_metafield(order_id, namespace, key, value, value_type="json"):
     """Write (create or overwrite) a metafield on an Order, visible on the
     order's page in Shopify admin under Metafields."""
     return _set_metafield("Order", order_id, namespace, key, value, value_type)
+
+
+def create_discount_code(code, percentage, expires_at, starts_at=None):
+    """Create a single-use, percentage-off discount code (e.g. for an
+    abandoned-cart recovery nudge). `percentage` is 0-100, `expires_at` an
+    ISO datetime string. The caller (discounts.py) is responsible for
+    keeping the percentage within the merchant's discount policy — this
+    function does not itself enforce any bound."""
+    result = _graphql(
+        """
+        mutation CreateDiscountCode($basicCodeDiscount: DiscountCodeBasicInput!) {
+          discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+            codeDiscountNode { id }
+            userErrors { field message }
+          }
+        }
+        """,
+        {
+            "basicCodeDiscount": {
+                "title": code,
+                "code": code,
+                "startsAt": starts_at or datetime.now().isoformat(),
+                "endsAt": expires_at,
+                "customerSelection": {"all": True},
+                "customerGets": {
+                    "value": {"percentage": percentage / 100},
+                    "items": {"all": True},
+                },
+                "appliesOncePerCustomer": True,
+                "usageLimit": 1,
+            }
+        },
+    )["discountCodeBasicCreate"]
+
+    errors = result["userErrors"]
+    if errors:
+        raise RuntimeError(f"Discount code creation failed: {errors}")
+
+    return {
+        "code": code,
+        "percentage": percentage,
+        "expires_at": expires_at,
+        "discount_id": result["codeDiscountNode"]["id"],
+    }
 
 
 def save_customer_feedback(customer_id, feedback_type, feedback):
