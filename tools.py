@@ -1,0 +1,412 @@
+"""Tool schemas (Anthropic tool-use format) and dispatcher shared by every agent."""
+
+import appointments
+import discounts
+import notification_log
+import shopify_client
+import whatsapp_client
+
+TOOL_SCHEMAS = [
+    {
+        "name": "get_order",
+        "description": "Look up full details for a single Shopify order by its numeric order ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string", "description": "The Shopify order ID."}},
+            "required": ["order_id"],
+        },
+    },
+    {
+        "name": "get_order_status",
+        "description": "Get just the financial and fulfillment status for a single Shopify order.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string", "description": "The Shopify order ID."}},
+            "required": ["order_id"],
+        },
+    },
+    {
+        "name": "list_recent_orders",
+        "description": "List Shopify orders created in the last N days.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days_back": {"type": "integer", "description": "How many days back to search. Defaults to 7."}
+            },
+        },
+    },
+    {
+        "name": "find_orders_by_phone",
+        "description": "Find Shopify orders placed with a given phone number, to identify who is messaging on WhatsApp.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"phone": {"type": "string", "description": "Phone number, with or without punctuation."}},
+            "required": ["phone"],
+        },
+    },
+    {
+        "name": "list_abandoned_checkouts",
+        "description": "List checkouts customers started but never completed, with their cart items and a recovery link.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours_old": {
+                    "type": "number",
+                    "description": "Only checkouts at least this many hours old. Defaults to 1.",
+                }
+            },
+        },
+    },
+    {
+        "name": "find_abandoned_checkout_by_phone",
+        "description": "Find a customer's abandoned checkout(s) by phone number, e.g. to answer 'did I leave something in my cart?'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"phone": {"type": "string", "description": "Phone number, with or without punctuation."}},
+            "required": ["phone"],
+        },
+    },
+    {
+        "name": "send_whatsapp_message",
+        "description": "Send a plain-text WhatsApp message to a customer's phone number.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Destination phone number, e.g. +15551234567."},
+                "body": {"type": "string", "description": "Message text to send."},
+            },
+            "required": ["to", "body"],
+        },
+    },
+    {
+        "name": "send_whatsapp_buttons",
+        "description": (
+            "Send a WhatsApp message ending in 1-3 tappable quick-reply buttons instead of "
+            "plain text — use this when the message has an obvious next action (e.g. 'Track "
+            "order', 'Start a return', 'Talk to someone') so the customer can tap instead of "
+            "typing a reply. Keep each button title short (a couple of words)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Destination phone number, e.g. +15551234567."},
+                "body": {"type": "string", "description": "Message text shown above the buttons."},
+                "buttons": {
+                    "type": "array",
+                    "description": "1-3 buttons.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "Short internal identifier for this button."},
+                            "title": {"type": "string", "description": "Short label the customer sees and taps."},
+                        },
+                        "required": ["id", "title"],
+                    },
+                },
+            },
+            "required": ["to", "body", "buttons"],
+        },
+    },
+    {
+        "name": "cancel_order",
+        "description": (
+            "Cancel a Shopify order. Irreversible — only call this after the "
+            "customer has explicitly confirmed, in this conversation, that "
+            "they want the order cancelled."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "reason": {
+                    "type": "string",
+                    "enum": ["customer", "fraud", "inventory", "declined", "other"],
+                    "description": "Why the order is being cancelled.",
+                },
+            },
+            "required": ["order_id", "reason"],
+        },
+    },
+    {
+        "name": "refund_order",
+        "description": (
+            "Issue a refund against a Shopify order's original payment. "
+            "Irreversible — only call this after the customer has explicitly "
+            "confirmed, in this conversation, that they want a refund."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "amount": {
+                    "type": "string",
+                    "description": "Amount to refund. Omit to refund the full order total.",
+                },
+                "reason": {"type": "string", "description": "Internal note on why the refund was issued."},
+            },
+            "required": ["order_id"],
+        },
+    },
+    {
+        "name": "get_returnable_items",
+        "description": "List an order's fulfilled line items that are eligible to return, with the IDs request_return needs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string", "description": "The Shopify order ID."}},
+            "required": ["order_id"],
+        },
+    },
+    {
+        "name": "request_return",
+        "description": (
+            "Request a return for one or more items on an order (from get_returnable_items). "
+            "Does not refund money by itself. Irreversible-ish — only call this after the "
+            "customer has explicitly confirmed, in this conversation, which item(s) and why."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "items": {
+                    "type": "array",
+                    "description": "Items to return, from get_returnable_items.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "fulfillment_line_item_id": {"type": "string"},
+                            "quantity": {"type": "integer"},
+                        },
+                        "required": ["fulfillment_line_item_id", "quantity"],
+                    },
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Short return reason category, e.g. 'wrong_item', 'defective', 'unwanted'.",
+                },
+                "note": {"type": "string", "description": "The customer's own explanation, in more detail."},
+            },
+            "required": ["order_id", "items"],
+        },
+    },
+    {
+        "name": "save_customer_feedback",
+        "description": (
+            "Save a customer's feedback — about their delivery experience, or why they're "
+            "returning/exchanging something — onto their Shopify customer record, visible to "
+            "store staff in Shopify admin (not just in this WhatsApp conversation)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "phone": {"type": "string", "description": "Customer's phone number, to find their Shopify customer record."},
+                "feedback_type": {
+                    "type": "string",
+                    "enum": ["delivery", "return"],
+                    "description": "'delivery' for delivery-experience feedback, 'return' for why they're returning something.",
+                },
+                "comment": {"type": "string", "description": "The customer's own words."},
+                "rating": {"type": "integer", "description": "Optional 1-5 satisfaction rating, if they gave one."},
+                "order_id": {"type": "string", "description": "The related order ID, if known."},
+            },
+            "required": ["phone", "feedback_type", "comment"],
+        },
+    },
+    {
+        "name": "list_appointment_slots",
+        "description": "List available appointment time slots for booking.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "appointment_type": {
+                    "type": "string",
+                    "enum": ["return_pickup", "delivery", "service"],
+                    "description": (
+                        "'return_pickup' for a courier to collect a return, 'delivery' to schedule "
+                        "an order's delivery, 'service' for an in-store visit (fitting, consultation, repair, etc.)."
+                    ),
+                },
+                "days_ahead": {
+                    "type": "integer",
+                    "description": "How many days ahead to search. Defaults to the store's configured window.",
+                },
+            },
+            "required": ["appointment_type"],
+        },
+    },
+    {
+        "name": "book_appointment",
+        "description": "Book an appointment slot (from list_appointment_slots) for a customer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "appointment_type": {"type": "string", "enum": ["return_pickup", "delivery", "service"]},
+                "slot_id": {"type": "string", "description": "A slot_id from list_appointment_slots."},
+                "phone": {"type": "string", "description": "Customer's phone number."},
+                "order_id": {
+                    "type": "string",
+                    "description": "Required for 'return_pickup' and 'delivery' — the related order.",
+                },
+                "service_name": {
+                    "type": "string",
+                    "description": "For 'service' appointments — what it's for, e.g. 'fitting', 'consultation', 'repair'.",
+                },
+                "notes": {"type": "string", "description": "Any extra detail the customer gave."},
+            },
+            "required": ["appointment_type", "slot_id", "phone"],
+        },
+    },
+    {
+        "name": "cancel_appointment",
+        "description": "Cancel a previously booked appointment.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "appointment_id": {
+                    "type": "string",
+                    "description": "The appointment's id, from book_appointment or find_appointments_by_phone.",
+                }
+            },
+            "required": ["appointment_id"],
+        },
+    },
+    {
+        "name": "find_appointments_by_phone",
+        "description": "List a customer's upcoming booked appointments by phone number.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"phone": {"type": "string", "description": "Phone number, with or without punctuation."}},
+            "required": ["phone"],
+        },
+    },
+    {
+        "name": "create_discount_code",
+        "description": (
+            "Get a personalized discount code for a customer's abandoned cart, within the "
+            "store's discount policy — reuses an existing code if one was already issued for "
+            "this checkout. May return {\"eligible\": false} if the customer has already "
+            "reached the policy's limit; in that case, don't mention a discount at all."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "checkout_id": {"type": "string", "description": "The abandoned checkout's id."},
+                "phone": {"type": "string", "description": "Customer's phone number."},
+                "cart_value": {"type": "string", "description": "The cart's total price, e.g. '45.00'."},
+                "hours_since_abandoned": {
+                    "type": "number",
+                    "description": "How many hours since the cart was abandoned. Defaults to 0.",
+                },
+            },
+            "required": ["checkout_id", "phone", "cart_value"],
+        },
+    },
+    {
+        "name": "create_order_compensation_code",
+        "description": (
+            "Get a one-time discount code to offer as an apology for bad news on an existing "
+            "order (cancelled, payment failed, or similar), within the store's discount policy "
+            "— reuses an existing code if one was already issued for this order. May return "
+            "{\"eligible\": false} if the customer has already reached the policy's limit; in "
+            "that case, don't mention compensation at all."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "phone": {"type": "string", "description": "Customer's phone number."},
+                "reason": {"type": "string", "description": "Why compensation is being offered, e.g. 'order cancelled'."},
+            },
+            "required": ["order_id", "phone"],
+        },
+    },
+]
+
+def _save_customer_feedback(tool_input):
+    customer_id = shopify_client.find_customer_id_by_phone(tool_input["phone"])
+    if not customer_id:
+        return {"error": "No Shopify customer record found for this phone number"}
+
+    feedback = {"comment": tool_input["comment"]}
+    if tool_input.get("rating") is not None:
+        feedback["rating"] = tool_input["rating"]
+    if tool_input.get("order_id"):
+        feedback["order_id"] = tool_input["order_id"]
+
+    return shopify_client.save_customer_feedback(customer_id, tool_input["feedback_type"], feedback)
+
+
+def _send_whatsapp_message(tool_input):
+    """Every proactive agent (notify, monitor, cart-recovery) reaches
+    WhatsApp through this one handler, so logging here — rather than at each
+    call site — is enough to give the support agent visibility into
+    everything already sent, with nothing to duplicate or forget per-agent."""
+    result = whatsapp_client.send_whatsapp_message(tool_input["to"], tool_input["body"])
+    notification_log.log(tool_input["to"], tool_input["body"])
+    return result
+
+
+def _send_whatsapp_buttons(tool_input):
+    result = whatsapp_client.send_whatsapp_buttons(tool_input["to"], tool_input["body"], tool_input["buttons"])
+    notification_log.log(tool_input["to"], tool_input["body"])
+    return result
+
+
+def _create_discount_code(tool_input):
+    return discounts.get_or_create(
+        checkout_id=tool_input["checkout_id"],
+        phone=tool_input["phone"],
+        cart_value=float(tool_input["cart_value"]),
+        hours_since_abandoned=float(tool_input.get("hours_since_abandoned", 0)),
+    )
+
+
+def _create_order_compensation_code(tool_input):
+    return discounts.get_or_create_for_order(
+        order_id=tool_input["order_id"],
+        phone=tool_input["phone"],
+        reason=tool_input.get("reason"),
+    )
+
+
+_HANDLERS = {
+    "get_order": lambda i: shopify_client.get_order(i["order_id"]),
+    "get_order_status": lambda i: shopify_client.get_order_status(i["order_id"]),
+    "list_recent_orders": lambda i: shopify_client.list_recent_orders(days_back=i.get("days_back", 7)),
+    "find_orders_by_phone": lambda i: shopify_client.find_orders_by_phone(i["phone"]),
+    "list_abandoned_checkouts": lambda i: shopify_client.list_abandoned_checkouts(hours_old=i.get("hours_old", 1)),
+    "find_abandoned_checkout_by_phone": lambda i: shopify_client.find_abandoned_checkout_by_phone(i["phone"]),
+    "send_whatsapp_message": _send_whatsapp_message,
+    "send_whatsapp_buttons": _send_whatsapp_buttons,
+    "cancel_order": lambda i: shopify_client.cancel_order(i["order_id"], reason=i.get("reason")),
+    "refund_order": lambda i: shopify_client.refund_order(
+        i["order_id"], amount=i.get("amount"), reason=i.get("reason")
+    ),
+    "get_returnable_items": lambda i: shopify_client.get_returnable_items(i["order_id"]),
+    "request_return": lambda i: shopify_client.request_return(
+        i["order_id"], i["items"], reason=i.get("reason"), note=i.get("note")
+    ),
+    "save_customer_feedback": _save_customer_feedback,
+    "list_appointment_slots": lambda i: appointments.list_slots(i["appointment_type"], days_ahead=i.get("days_ahead")),
+    "book_appointment": lambda i: appointments.book(
+        i["appointment_type"],
+        i["slot_id"],
+        i["phone"],
+        order_id=i.get("order_id"),
+        service_name=i.get("service_name"),
+        notes=i.get("notes"),
+    ),
+    "cancel_appointment": lambda i: appointments.cancel(i["appointment_id"]),
+    "find_appointments_by_phone": lambda i: appointments.find_by_phone(i["phone"]),
+    "create_discount_code": _create_discount_code,
+    "create_order_compensation_code": _create_order_compensation_code,
+}
+
+
+def run_tool(name, tool_input):
+    handler = _HANDLERS.get(name)
+    if handler is None:
+        return {"error": f"Unknown tool: {name}"}
+    try:
+        return handler(tool_input)
+    except Exception as exc:  # surfaced back to the model as a tool error, not a crash
+        return {"error": str(exc)}
