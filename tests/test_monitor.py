@@ -1,6 +1,14 @@
 import monitor
 
 
+def test_monitor_tools_include_send_whatsapp_buttons():
+    assert "send_whatsapp_buttons" in monitor.MONITOR_TOOLS
+
+
+def test_monitor_tools_include_create_order_compensation_code():
+    assert "create_order_compensation_code" in monitor.MONITOR_TOOLS
+
+
 def test_check_once_notifies_on_status_change(monkeypatch):
     orders = [
         {"id": 1001, "financial_status": "paid", "fulfillment_status": "fulfilled"},

@@ -2,6 +2,7 @@
 
 import appointments
 import discounts
+import notification_log
 import shopify_client
 import whatsapp_client
 
@@ -67,7 +68,7 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "send_whatsapp_message",
-        "description": "Send a WhatsApp message to a customer's phone number.",
+        "description": "Send a plain-text WhatsApp message to a customer's phone number.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -75,6 +76,35 @@ TOOL_SCHEMAS = [
                 "body": {"type": "string", "description": "Message text to send."},
             },
             "required": ["to", "body"],
+        },
+    },
+    {
+        "name": "send_whatsapp_buttons",
+        "description": (
+            "Send a WhatsApp message ending in 1-3 tappable quick-reply buttons instead of "
+            "plain text — use this when the message has an obvious next action (e.g. 'Track "
+            "order', 'Start a return', 'Talk to someone') so the customer can tap instead of "
+            "typing a reply. Keep each button title short (a couple of words)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Destination phone number, e.g. +15551234567."},
+                "body": {"type": "string", "description": "Message text shown above the buttons."},
+                "buttons": {
+                    "type": "array",
+                    "description": "1-3 buttons.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "Short internal identifier for this button."},
+                            "title": {"type": "string", "description": "Short label the customer sees and taps."},
+                        },
+                        "required": ["id", "title"],
+                    },
+                },
+            },
+            "required": ["to", "body", "buttons"],
         },
     },
     {
@@ -270,6 +300,25 @@ TOOL_SCHEMAS = [
             "required": ["checkout_id", "phone", "cart_value"],
         },
     },
+    {
+        "name": "create_order_compensation_code",
+        "description": (
+            "Get a one-time discount code to offer as an apology for bad news on an existing "
+            "order (cancelled, payment failed, or similar), within the store's discount policy "
+            "— reuses an existing code if one was already issued for this order. May return "
+            "{\"eligible\": false} if the customer has already reached the policy's limit; in "
+            "that case, don't mention compensation at all."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The Shopify order ID."},
+                "phone": {"type": "string", "description": "Customer's phone number."},
+                "reason": {"type": "string", "description": "Why compensation is being offered, e.g. 'order cancelled'."},
+            },
+            "required": ["order_id", "phone"],
+        },
+    },
 ]
 
 def _save_customer_feedback(tool_input):
@@ -286,12 +335,36 @@ def _save_customer_feedback(tool_input):
     return shopify_client.save_customer_feedback(customer_id, tool_input["feedback_type"], feedback)
 
 
+def _send_whatsapp_message(tool_input):
+    """Every proactive agent (notify, monitor, cart-recovery) reaches
+    WhatsApp through this one handler, so logging here — rather than at each
+    call site — is enough to give the support agent visibility into
+    everything already sent, with nothing to duplicate or forget per-agent."""
+    result = whatsapp_client.send_whatsapp_message(tool_input["to"], tool_input["body"])
+    notification_log.log(tool_input["to"], tool_input["body"])
+    return result
+
+
+def _send_whatsapp_buttons(tool_input):
+    result = whatsapp_client.send_whatsapp_buttons(tool_input["to"], tool_input["body"], tool_input["buttons"])
+    notification_log.log(tool_input["to"], tool_input["body"])
+    return result
+
+
 def _create_discount_code(tool_input):
     return discounts.get_or_create(
         checkout_id=tool_input["checkout_id"],
         phone=tool_input["phone"],
         cart_value=float(tool_input["cart_value"]),
         hours_since_abandoned=float(tool_input.get("hours_since_abandoned", 0)),
+    )
+
+
+def _create_order_compensation_code(tool_input):
+    return discounts.get_or_create_for_order(
+        order_id=tool_input["order_id"],
+        phone=tool_input["phone"],
+        reason=tool_input.get("reason"),
     )
 
 
@@ -302,7 +375,8 @@ _HANDLERS = {
     "find_orders_by_phone": lambda i: shopify_client.find_orders_by_phone(i["phone"]),
     "list_abandoned_checkouts": lambda i: shopify_client.list_abandoned_checkouts(hours_old=i.get("hours_old", 1)),
     "find_abandoned_checkout_by_phone": lambda i: shopify_client.find_abandoned_checkout_by_phone(i["phone"]),
-    "send_whatsapp_message": lambda i: whatsapp_client.send_whatsapp_message(i["to"], i["body"]),
+    "send_whatsapp_message": _send_whatsapp_message,
+    "send_whatsapp_buttons": _send_whatsapp_buttons,
     "cancel_order": lambda i: shopify_client.cancel_order(i["order_id"], reason=i.get("reason")),
     "refund_order": lambda i: shopify_client.refund_order(
         i["order_id"], amount=i.get("amount"), reason=i.get("reason")
@@ -324,6 +398,7 @@ _HANDLERS = {
     "cancel_appointment": lambda i: appointments.cancel(i["appointment_id"]),
     "find_appointments_by_phone": lambda i: appointments.find_by_phone(i["phone"]),
     "create_discount_code": _create_discount_code,
+    "create_order_compensation_code": _create_order_compensation_code,
 }
 
 

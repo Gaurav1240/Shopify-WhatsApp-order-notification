@@ -17,6 +17,7 @@ from flask import Flask, request
 
 from agent import run_agent
 from conversation_store import append_turn, get_history
+from notification_log import recent as get_recent_notifications
 from whatsapp_client import send_whatsapp_message
 
 load_dotenv()
@@ -28,7 +29,7 @@ app = Flask(__name__)
 # return policy instead of guessing. See README for the expected URL shape.
 STOREFRONT_MCP_URL = os.environ.get("STOREFRONT_MCP_URL")
 
-NOTIFY_TOOLS = ["get_order", "get_order_status", "send_whatsapp_message"]
+NOTIFY_TOOLS = ["get_order", "get_order_status", "send_whatsapp_message", "send_whatsapp_buttons"]
 SUPPORT_TOOLS = [
     "get_order",
     "get_order_status",
@@ -50,9 +51,12 @@ NOTIFY_SYSTEM_PROMPT = (
     "You are the order-notification agent for a Shopify store. You are given "
     "the details of an order that was just created. Write a short, warm "
     "WhatsApp message to the customer confirming their order (mention the "
-    "order name/number and total price), and send it with the "
-    "send_whatsapp_message tool to the customer's phone number. If the phone "
-    "number is missing, do not send anything and just say so."
+    "order name/number and total price). Prefer send_whatsapp_buttons over "
+    "send_whatsapp_message, closing with buttons for the obvious next "
+    "actions (e.g. 'Track order', 'Need help?') so the customer can tap "
+    "instead of typing a reply — fall back to send_whatsapp_message only if "
+    "no button makes sense. If the phone number is missing, do not send "
+    "anything and just say so."
 )
 
 SUPPORT_SYSTEM_PROMPT = (
@@ -138,12 +142,28 @@ def whatsapp_webhook():
         return "EVENT_RECEIVED", 200
 
     from_number = message["from"]
-    body = message.get("text", {}).get("body", "")
+    if message.get("type") == "interactive":
+        # A tap on a send_whatsapp_buttons quick-reply arrives here, not as
+        # a "text" message — without this branch, message.get("text", {})
+        # is {} and the tap is silently read as an empty message.
+        body = message.get("interactive", {}).get("button_reply", {}).get("title", "")
+    else:
+        body = message.get("text", {}).get("body", "")
 
     history = get_history(from_number)
+    user_message = f"Message from {from_number}: {body}"
+
+    notifications = get_recent_notifications(from_number)
+    if notifications:
+        recent_lines = "\n".join(f"- {n['text']}" for n in notifications)
+        user_message = (
+            f"Recent proactive notifications already sent to this customer "
+            f"(they may be asking about one of these):\n{recent_lines}\n\n{user_message}"
+        )
+
     reply_text = run_agent(
         system_prompt=SUPPORT_SYSTEM_PROMPT,
-        user_message=f"Message from {from_number}: {body}",
+        user_message=user_message,
         tool_names=SUPPORT_TOOLS,
         history=history,
         mcp_server_url=STOREFRONT_MCP_URL,

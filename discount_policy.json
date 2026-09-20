@@ -7,6 +7,7 @@
   ],
   "long_abandoned_hours": 48,
   "long_abandoned_bonus_percent": 5,
+  "order_issue_compensation_percent": 10,
   "code_expiry_hours": 72,
   "max_codes_per_customer": 2,
   "max_codes_window_days": 30

@@ -66,6 +66,59 @@ def test_send_whatsapp_message_raises_on_http_error(monkeypatch):
         pass
 
 
+def test_send_whatsapp_buttons_posts_interactive_payload(monkeypatch):
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return FakeHTTPResponse({"messages": [{"id": "wamid.456"}]})
+
+    monkeypatch.setattr(whatsapp_client.requests, "post", fake_post)
+
+    buttons = [{"id": "track", "title": "Track order"}, {"id": "help", "title": "Need help?"}]
+    result = whatsapp_client.send_whatsapp_buttons("+15551234567", "Your order shipped!", buttons)
+
+    assert captured["json"] == {
+        "messaging_product": "whatsapp",
+        "to": "15551234567",
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": "Your order shipped!"},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": "track", "title": "Track order"}},
+                    {"type": "reply", "reply": {"id": "help", "title": "Need help?"}},
+                ]
+            },
+        },
+    }
+    assert result == {
+        "id": "wamid.456",
+        "to": "+15551234567",
+        "body": "Your order shipped!",
+        "buttons": buttons,
+    }
+
+
+def test_send_whatsapp_buttons_rejects_too_many_buttons():
+    buttons = [{"id": str(i), "title": str(i)} for i in range(4)]
+
+    try:
+        whatsapp_client.send_whatsapp_buttons("+1555", "hi", buttons)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_send_whatsapp_buttons_rejects_empty_buttons():
+    try:
+        whatsapp_client.send_whatsapp_buttons("+1555", "hi", [])
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
 def test_uses_custom_api_version(monkeypatch):
     monkeypatch.setattr(whatsapp_client, "GRAPH_API_VERSION", "v99.0")
 

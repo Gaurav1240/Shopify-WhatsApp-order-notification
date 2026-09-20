@@ -3,6 +3,10 @@ import json
 import flask_app
 
 
+def test_notify_tools_include_send_whatsapp_buttons():
+    assert "send_whatsapp_buttons" in flask_app.NOTIFY_TOOLS
+
+
 def test_order_webhook_invokes_notify_agent(monkeypatch):
     captured = {}
 
@@ -116,6 +120,49 @@ def test_whatsapp_webhook_uses_history_and_sends_reply(monkeypatch):
     assert sent == [("15551234567", "Sure, order #1001 is on its way!")]
 
 
+def _meta_button_reply_payload(from_number, button_id, button_title):
+    return {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": from_number,
+                                    "type": "interactive",
+                                    "interactive": {
+                                        "type": "button_reply",
+                                        "button_reply": {"id": button_id, "title": button_title},
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+
+def test_whatsapp_webhook_reads_button_tap_as_body(monkeypatch):
+    monkeypatch.setattr(flask_app, "get_history", lambda phone: [])
+    monkeypatch.setattr(flask_app, "append_turn", lambda *a: None)
+    monkeypatch.setattr(flask_app, "send_whatsapp_message", lambda *a: None)
+    monkeypatch.setattr(flask_app, "get_recent_notifications", lambda phone: [])
+
+    captured = {}
+    monkeypatch.setattr(flask_app, "run_agent", lambda **kwargs: captured.update(kwargs) or "ok")
+
+    client = flask_app.app.test_client()
+    client.post(
+        "/whatsapp_webhook",
+        json=_meta_button_reply_payload("15551234567", "track", "Track order"),
+    )
+
+    assert "Track order" in captured["user_message"]
+
+
 def test_whatsapp_webhook_ignores_non_message_events(monkeypatch):
     monkeypatch.setattr(flask_app, "run_agent", lambda **k: (_ for _ in ()).throw(AssertionError("should not run")))
 
@@ -168,6 +215,41 @@ def test_whatsapp_webhook_mcp_server_url_none_by_default(monkeypatch):
 
 def test_support_tools_include_save_customer_feedback():
     assert "save_customer_feedback" in flask_app.SUPPORT_TOOLS
+
+
+def test_whatsapp_webhook_includes_recent_notifications_as_context(monkeypatch):
+    monkeypatch.setattr(flask_app, "get_history", lambda phone: [])
+    monkeypatch.setattr(flask_app, "append_turn", lambda *a: None)
+    monkeypatch.setattr(flask_app, "send_whatsapp_message", lambda *a: None)
+    monkeypatch.setattr(
+        flask_app,
+        "get_recent_notifications",
+        lambda phone: [{"text": "Your order #1001 has shipped!", "at": "2026-01-01T00:00:00"}],
+    )
+
+    captured = {}
+    monkeypatch.setattr(flask_app, "run_agent", lambda **kwargs: captured.update(kwargs) or "ok")
+
+    client = flask_app.app.test_client()
+    client.post("/whatsapp_webhook", json=_meta_message_payload("15551234567", "did that already go out?"))
+
+    assert "Your order #1001 has shipped!" in captured["user_message"]
+    assert "did that already go out?" in captured["user_message"]
+
+
+def test_whatsapp_webhook_omits_notification_context_when_none(monkeypatch):
+    monkeypatch.setattr(flask_app, "get_history", lambda phone: [])
+    monkeypatch.setattr(flask_app, "append_turn", lambda *a: None)
+    monkeypatch.setattr(flask_app, "send_whatsapp_message", lambda *a: None)
+    monkeypatch.setattr(flask_app, "get_recent_notifications", lambda phone: [])
+
+    captured = {}
+    monkeypatch.setattr(flask_app, "run_agent", lambda **kwargs: captured.update(kwargs) or "ok")
+
+    client = flask_app.app.test_client()
+    client.post("/whatsapp_webhook", json=_meta_message_payload("15551234567", "hi"))
+
+    assert captured["user_message"] == "Message from 15551234567: hi"
 
 
 def test_support_tools_include_appointment_booking():

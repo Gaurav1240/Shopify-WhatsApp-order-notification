@@ -27,7 +27,10 @@ and when. Three agents share the same tool set (`tools.py`):
   ...), and decides on its own whether the customer should hear about it.
   When an order becomes fulfilled/delivered, it tacks on a casual ask for
   delivery feedback — whatever the customer replies with is picked up and
-  saved by the support agent, same as above.
+  saved by the support agent, same as above. When the change is bad news the
+  store caused (cancelled, payment failed), it can proactively offer a
+  one-time compensation discount instead of just an apology — see
+  "Abandoned-cart discount policy" below, which this reuses.
 - **Cart-recovery agent** (`abandoned_cart.py`) — polls Shopify's abandoned-
   checkouts list for carts that were started but never completed. For each
   one it hasn't already messaged, it drafts and sends a friendly WhatsApp
@@ -40,6 +43,22 @@ and when. Three agents share the same tool set (`tools.py`):
 
 All of the above tools are also reachable directly by an external system —
 see "MCP server (plugging into another agentic-commerce system)" below.
+
+**One thread, not four silos.** Every proactive message any agent sends
+(notify, monitor, cart-recovery) is logged by `notification_log.py`, keyed
+by phone number. When that customer later messages in, the support agent is
+told what's already been sent to them as context on their message — so "did
+that already go out?" doesn't require them to explain what "that" is. This
+is deliberately a separate, unbounded append-only log rather than being
+folded into `conversation_store.py`'s turn history: that history round-trips
+through the Anthropic Messages API, which requires strict user/assistant
+role alternation, and a proactive message (or two in a row) has no paired
+customer turn to alternate with.
+
+**Tap, don't type.** Proactive messages can end in up to 3 quick-reply
+buttons (`send_whatsapp_buttons`, e.g. "Track order" / "Need help?") instead
+of asking the customer to type a reply — the notification and monitoring
+agents both have this option, and use it especially for bad-news updates.
 
 ## Setup
 
@@ -219,6 +238,14 @@ eligible for a discount (`create_discount_code` returns
 `{"eligible": false}`), it's instructed to just send the plain recovery
 message without mentioning one.
 
+The monitoring agent uses the same policy/store, through a second entry
+point (`create_order_compensation_code`) rather than a separate mechanism:
+when a status change is bad news the store caused, it can offer a flat
+`order_issue_compensation_percent` (still capped at `max_discount_percent`,
+still rate-limited the same way) as an apology, keyed by order id instead of
+checkout id so it doesn't collide with an unrelated abandoned-cart code for
+the same customer.
+
 ## MCP server (plugging into another agentic-commerce system)
 
 `mcp_server.py` exposes every tool in `tools.py` — order lookups, cancel,
@@ -263,7 +290,8 @@ trip before trusting it.
   checkouts, returns, order/customer metafields for feedback and
   appointments) via raw `requests` calls, no SDK.
 - `whatsapp_client.py` — sends WhatsApp messages via Meta's WhatsApp Business
-  Cloud API (Graph API).
+  Cloud API (Graph API), plain text (`send_whatsapp_message`) or with up to
+  3 tappable quick-reply buttons (`send_whatsapp_buttons`).
 - `tools.py` — the tool schemas and dispatcher every agent shares.
 - `agent.py` — the tool-use loop (Claude decides which tools to call),
   including an optional connection to a remote MCP server (`mcp_server_url`)
@@ -271,14 +299,18 @@ trip before trusting it.
 - `flask_app.py` — the two webhook endpoints.
 - `conversation_store.py` — per-phone-number chat history for the support
   agent's multi-turn flows.
+- `notification_log.py` — per-phone-number log of proactive messages any
+  agent has sent, given to the support agent as context (not part of the
+  strict turn history `conversation_store.py` round-trips through the
+  Messages API).
 - `monitor.py` / `state_store.py` — the autonomous status-change monitor and
   its small on-disk state.
 - `abandoned_cart.py` / `cart_state_store.py` — the cart-recovery poller and
   its small on-disk "already messaged" set.
 - `discounts.py` / `discount_policy.py` / `discount_store.py` — computes and
-  issues abandoned-cart discount codes within a merchant-configured policy
-  (`discount_policy.json`), tracking issued codes for reuse and rate-limiting
-  (`discount_codes.json`).
+  issues discount codes (abandoned-cart recovery, and order-issue
+  compensation) within a merchant-configured policy (`discount_policy.json`),
+  tracking issued codes for reuse and rate-limiting (`discount_codes.json`).
 - `appointments.py` / `appointment_store.py` — the appointment-booking
   orchestration (Shopify write-through) and the local slot calendar it
   books against.

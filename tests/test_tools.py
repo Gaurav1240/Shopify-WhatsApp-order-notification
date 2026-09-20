@@ -47,6 +47,39 @@ def test_send_whatsapp_message_handler_calls_whatsapp_client(monkeypatch):
     assert result == {"sid": "SM123"}
 
 
+def test_send_whatsapp_message_handler_logs_to_notification_log(monkeypatch):
+    monkeypatch.setattr(tools.whatsapp_client, "send_whatsapp_message", lambda to, body: {"sid": "SM123"})
+
+    logged = {}
+    monkeypatch.setattr(
+        tools.notification_log, "log", lambda phone, text: logged.update({"phone": phone, "text": text})
+    )
+
+    tools._HANDLERS["send_whatsapp_message"]({"to": "+1555", "body": "your order shipped!"})
+
+    assert logged == {"phone": "+1555", "text": "your order shipped!"}
+
+
+def test_send_whatsapp_buttons_handler_calls_whatsapp_client_and_logs(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(
+        tools.whatsapp_client,
+        "send_whatsapp_buttons",
+        lambda to, body, buttons: calls.update({"to": to, "body": body, "buttons": buttons}) or {"sid": "SM1"},
+    )
+    logged = {}
+    monkeypatch.setattr(
+        tools.notification_log, "log", lambda phone, text: logged.update({"phone": phone, "text": text})
+    )
+
+    buttons = [{"id": "track", "title": "Track order"}]
+    result = tools._HANDLERS["send_whatsapp_buttons"]({"to": "+1555", "body": "hi", "buttons": buttons})
+
+    assert calls == {"to": "+1555", "body": "hi", "buttons": buttons}
+    assert logged == {"phone": "+1555", "text": "hi"}
+    assert result == {"sid": "SM1"}
+
+
 def test_cancel_order_handler_forwards_reason(monkeypatch):
     calls = {}
 
@@ -292,3 +325,33 @@ def test_create_discount_code_handler_defaults_hours_since_abandoned(monkeypatch
     tools._HANDLERS["create_discount_code"]({"checkout_id": "5001", "phone": "+15551234567", "cart_value": "40.00"})
 
     assert calls == {"hours_since_abandoned": 0.0}
+
+
+def test_create_order_compensation_code_handler_forwards_all_fields(monkeypatch):
+    calls = {}
+
+    def fake_get_or_create_for_order(order_id, phone, reason=None):
+        calls.update({"order_id": order_id, "phone": phone, "reason": reason})
+        return {"code": "SAVE10-ABCDEF"}
+
+    monkeypatch.setattr(tools.discounts, "get_or_create_for_order", fake_get_or_create_for_order)
+
+    result = tools._HANDLERS["create_order_compensation_code"](
+        {"order_id": "1001", "phone": "+15551234567", "reason": "order cancelled"}
+    )
+
+    assert calls == {"order_id": "1001", "phone": "+15551234567", "reason": "order cancelled"}
+    assert result == {"code": "SAVE10-ABCDEF"}
+
+
+def test_create_order_compensation_code_handler_defaults_reason(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(
+        tools.discounts,
+        "get_or_create_for_order",
+        lambda order_id, phone, reason=None: calls.update({"reason": reason}),
+    )
+
+    tools._HANDLERS["create_order_compensation_code"]({"order_id": "1001", "phone": "+15551234567"})
+
+    assert calls == {"reason": None}

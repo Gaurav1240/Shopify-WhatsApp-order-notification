@@ -64,6 +64,7 @@ def _isolated_state_files(tmp_path, monkeypatch):
     import conversation_store
     import discount_policy
     import discount_store
+    import notification_log
     import state_store
 
     monkeypatch.setattr(state_store, "STATE_PATH", str(tmp_path / "monitor_state.json"))
@@ -74,6 +75,7 @@ def _isolated_state_files(tmp_path, monkeypatch):
     # Points at a nonexistent path by default so tests get discount_policy's
     # built-in defaults, not whatever this repo's real discount_policy.json holds.
     monkeypatch.setattr(discount_policy, "DISCOUNT_POLICY_PATH", str(tmp_path / "discount_policy.json"))
+    monkeypatch.setattr(notification_log, "NOTIFICATION_LOG_PATH", str(tmp_path / "notification_log.json"))
 
 
 @pytest.fixture(autouse=True)
